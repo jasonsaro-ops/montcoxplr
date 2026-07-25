@@ -31,10 +31,11 @@
    the page, and copy the request URL into CONFIG.sources.arcgisCandidates
    below (add ".../query?where=1=1&outFields=*&f=geojson" if it's missing).
 
-   PulsePoint has no public web API — it's a native app tied to agency CAD
-   subscriptions — so it's intentionally not wired in here, just linked.
-   Broadcastify has no free public JSON API either; a feed's web player can
-   be iframed once you supply a feed ID (see CONFIG.sources.broadcastify).
+   3. A third public page, livecad-unitsoos.asp, lists units currently
+      Out Of Service (OOS). It's the same plain-HTML/ASP pattern as the
+      RSS feed (same webapp07 host), so it's fetched through the same
+      CORS proxy chain and parsed generically from whatever <table> rows
+      it returns.
    ========================================================================= */
 
 const CONFIG = {
@@ -47,8 +48,16 @@ const CONFIG = {
     zoom: 11,
     minZoom: 9,
     maxZoom: 18,
-    tileUrl: 'https://{s}.basemaps.cartocdn.com/dark_matter/{z}/{x}/{y}{r}.png',
-    tileAttribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+    // Correct CARTO raster path is "dark_all" (not "dark_matter") with
+    // explicit a/b/c/d subdomains — the previous build 404'd on every
+    // tile because of that path typo, which is why the map looked blank.
+    tileUrl: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    tileSubdomains: 'abcd',
+    tileAttribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    // Fallback basemap in case CARTO is ever unreachable from a given network
+    fallbackTileUrl: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    fallbackTileSubdomains: 'abc',
+    fallbackTileAttribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
   },
 
   sources: {
@@ -69,9 +78,12 @@ const CONFIG = {
       ]
     },
 
-    broadcastify: {
-      feedId: '',   // e.g. '22598' — find yours at broadcastify.com, search "Montgomery County PA"
-      embedBase: 'https://www.broadcastify.com/webPlayer/'
+    oos: {
+      url: 'https://webapp07.montcopa.org/eoc/cadinfo/livecad-unitsoos.asp',
+      corsProxies: [
+        (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+        (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`
+      ]
     }
   }
 };
@@ -99,9 +111,11 @@ const state = {
   incidents: [],       // normalized incident objects currently displayed
   markers: new Map(),  // id -> Leaflet marker
   activeFilter: 'all',
-  sourceStatus: { arcgis: 'connecting', rss: 'connecting' },
+  selectedId: null,
+  sourceStatus: { arcgis: 'connecting', rss: 'connecting', oos: 'connecting' },
   isDemo: false,
-  map: null
+  map: null,
+  oosUnits: []
 };
 
 // ---------------------------------------------------------------------
@@ -111,9 +125,10 @@ document.addEventListener('DOMContentLoaded', () => {
   initMap();
   initClock();
   initFilters();
-  initRadioToggle();
   refreshAll();
+  refreshOos();
   setInterval(refreshAll, CONFIG.refreshIntervalMs);
+  setInterval(refreshOos, CONFIG.refreshIntervalMs);
 });
 
 // ---------------------------------------------------------------------
@@ -125,12 +140,30 @@ function initMap() {
     attributionControl: true
   }).setView(CONFIG.map.center, CONFIG.map.zoom);
 
-  L.tileLayer(CONFIG.map.tileUrl, {
+  const primaryTiles = L.tileLayer(CONFIG.map.tileUrl, {
+    subdomains: CONFIG.map.tileSubdomains,
     minZoom: CONFIG.map.minZoom,
     maxZoom: CONFIG.map.maxZoom,
     attribution: CONFIG.map.tileAttribution
-  }).addTo(m);
+  });
 
+  // If the primary basemap ever fails to load tiles (network block, CDN
+  // outage), swap to the OSM fallback automatically rather than leaving
+  // the map blank.
+  let fallenBack = false;
+  primaryTiles.on('tileerror', () => {
+    if (fallenBack) return;
+    fallenBack = true;
+    m.removeLayer(primaryTiles);
+    L.tileLayer(CONFIG.map.fallbackTileUrl, {
+      subdomains: CONFIG.map.fallbackTileSubdomains,
+      minZoom: CONFIG.map.minZoom,
+      maxZoom: CONFIG.map.maxZoom,
+      attribution: CONFIG.map.fallbackTileAttribution
+    }).addTo(m);
+  });
+
+  primaryTiles.addTo(m);
   state.map = m;
 }
 
@@ -169,6 +202,7 @@ function renderMarkers() {
         <div class="p-row">Dispatched: ${escapeHtml(inc.dispatched || '—')}</div>
       </div>
     `);
+    marker.on('click', () => selectIncident(inc.id));
     marker.addTo(state.map);
     state.markers.set(inc.id, marker);
   });
@@ -309,6 +343,87 @@ function parseRssItems(xmlText) {
 }
 
 // ---------------------------------------------------------------------
+// DATA FETCHING — Units Out of Service (OOS)
+// ---------------------------------------------------------------------
+async function refreshOos() {
+  setSourceStatus('oos', 'connecting');
+  const units = await fetchOos();
+  state.oosUnits = units || [];
+  renderOosList();
+}
+
+async function fetchOos() {
+  const { url, corsProxies } = CONFIG.sources.oos;
+
+  for (const buildProxyUrl of corsProxies) {
+    try {
+      const res = await fetch(buildProxyUrl(url), { cache: 'no-store' });
+      if (!res.ok) continue;
+      const html = await res.text();
+      const units = parseOosHtml(html);
+      setSourceStatus('oos', 'live');
+      return units; // note: an empty array is a valid "zero units OOS" result
+    } catch (err) {
+      continue;
+    }
+  }
+  setSourceStatus('oos', 'down');
+  return null;
+}
+
+// The county serves this as a plain HTML page rather than a documented
+// feed, so this parses generically off whatever <table> rows come back
+// instead of assuming exact column names — it degrades gracefully if the
+// county changes the page's markup rather than throwing.
+function parseOosHtml(html) {
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const rows = Array.from(doc.querySelectorAll('table tr'));
+    const units = [];
+
+    rows.forEach((row) => {
+      const cells = Array.from(row.querySelectorAll('td'))
+        .map((c) => c.textContent.replace(/\s+/g, ' ').trim())
+        .filter((t) => t.length > 0);
+
+      if (cells.length === 0) return;
+      // skip obvious header rows (e.g. "Unit", "Station", "Reason")
+      if (cells.length <= 2 && /unit|station|reason|status|out of service/i.test(cells.join(' '))) return;
+
+      units.push({
+        unit: cells[0] || 'UNIT',
+        detail: cells.slice(1).join(' · ')
+      });
+    });
+
+    return units;
+  } catch (err) {
+    return [];
+  }
+}
+
+function renderOosList() {
+  const list = document.getElementById('oos-list');
+  if (!list) return;
+
+  if (state.sourceStatus.oos === 'down') {
+    list.innerHTML = `<div class="oos-empty">OOS FEED UNAVAILABLE</div>`;
+    return;
+  }
+  if (!state.oosUnits || state.oosUnits.length === 0) {
+    list.innerHTML = `<div class="oos-empty">NO UNITS OUT OF SERVICE</div>`;
+    return;
+  }
+
+  list.innerHTML = state.oosUnits.slice(0, 40).map((u) => `
+    <div class="oos-item">
+      <div class="oos-unit">${escapeHtml(u.unit)}</div>
+      ${u.detail ? `<div class="oos-detail">${escapeHtml(u.detail)}</div>` : ''}
+    </div>
+  `).join('');
+}
+
+// ---------------------------------------------------------------------
 // REFRESH ORCHESTRATION
 // ---------------------------------------------------------------------
 async function refreshAll() {
@@ -370,30 +485,46 @@ function renderFeedList() {
     return;
   }
 
-  list.innerHTML = filtered.slice(0, 60).map((i) => `
-    <div class="incident-card" data-cat="${i.cat}" data-id="${i.id}">
+  list.innerHTML = filtered.slice(0, 80).map((i) => `
+    <div class="incident-card ${i.id === state.selectedId ? 'selected' : ''}" data-cat="${i.cat}" data-id="${i.id}">
       <div class="top-row">
         <div class="type">${escapeHtml(i.type)}</div>
-        <div class="time">${escapeHtml(i.dispatched || '')}</div>
+        <div class="time">${escapeHtml(relativeTime(i._sortKey))}</div>
       </div>
       <div class="loc">${escapeHtml(i.address)}${i.municipality ? ' · ' + escapeHtml(i.municipality) : ''}</div>
+      ${i.description ? `<div class="desc">${escapeHtml(i.description)}</div>` : ''}
       <div class="meta">
         ${i.station ? `<span>STA ${escapeHtml(i.station)}</span>` : ''}
-        <span>${i.lat != null ? 'MAPPED' : 'NO GEO'}</span>
+        ${i.dispatched ? `<span>${escapeHtml(i.dispatched)}</span>` : ''}
+        <span class="${i.lat != null ? 'geo-yes' : 'geo-no'}">${i.lat != null ? 'MAPPED' : 'NO GEO'}</span>
         <span>${i.source.toUpperCase()}</span>
       </div>
+      ${i.lat != null ? `<div class="zoom-hint">⌖ Click to zoom on map</div>` : ''}
     </div>
   `).join('');
 
   list.querySelectorAll('.incident-card').forEach((card) => {
-    card.addEventListener('click', () => {
-      const inc = state.incidents.find((i) => i.id === card.dataset.id);
-      if (inc && inc.lat != null && state.markers.has(inc.id)) {
-        state.map.setView([inc.lat, inc.lon], 15, { animate: true });
-        state.markers.get(inc.id).openPopup();
-      }
-    });
+    card.addEventListener('click', () => selectIncident(card.dataset.id));
   });
+}
+
+function selectIncident(id) {
+  const inc = state.incidents.find((i) => i.id === id);
+  if (!inc) return;
+
+  state.selectedId = id;
+  document.querySelectorAll('.incident-card').forEach((c) => {
+    c.classList.toggle('selected', c.dataset.id === id);
+  });
+
+  if (inc.lat != null && inc.lon != null) {
+    state.map.flyTo([inc.lat, inc.lon], Math.max(state.map.getZoom(), 15), { animate: true, duration: 0.6 });
+    const marker = state.markers.get(inc.id);
+    if (marker) {
+      // popup can only open once the flyTo settles on some browsers
+      setTimeout(() => marker.openPopup(), 350);
+    }
+  }
 }
 
 function renderTicker() {
@@ -434,26 +565,6 @@ function initFilters() {
 }
 
 // ---------------------------------------------------------------------
-// RADIO (Broadcastify embed toggle)
-// ---------------------------------------------------------------------
-function initRadioToggle() {
-  const btn = document.getElementById('toggle-radio');
-  const wrap = document.getElementById('radio-embed');
-  btn.addEventListener('click', () => {
-    const feedId = CONFIG.sources.broadcastify.feedId;
-    if (!feedId) {
-      wrap.innerHTML = `<div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-dim);padding-top:6px;">
-        Set CONFIG.sources.broadcastify.feedId in app.js to enable this player.
-      </div>`;
-    } else {
-      wrap.innerHTML = `<iframe src="${CONFIG.sources.broadcastify.embedBase}?feedId=${encodeURIComponent(feedId)}" allow="autoplay"></iframe>`;
-    }
-    wrap.classList.toggle('open');
-    btn.textContent = wrap.classList.contains('open') ? 'Hide Player' : 'Show Player';
-  });
-}
-
-// ---------------------------------------------------------------------
 // CLOCK + STATUS CHIPS
 // ---------------------------------------------------------------------
 function initClock() {
@@ -481,15 +592,21 @@ setInterval(() => {
   if (dot) dot.className = 'dot live';
 }, 1000);
 
+const SOURCE_LABELS = {
+  arcgis: 'CAD MAP FEED',
+  rss: 'CAD RSS FEED'
+};
+
 function setSourceStatus(source, status) {
   state.sourceStatus[source] = status;
   const dot = document.getElementById(`dot-${source}`);
+  dot && (dot.className = 'dot ' + (status === 'live' ? 'live' : status === 'connecting' ? 'degraded' : 'down'));
+
   const lbl = document.getElementById(`lbl-${source}`);
-  if (!dot || !lbl) return;
-  dot.className = 'dot ' + (status === 'live' ? 'live' : status === 'connecting' ? 'degraded' : 'down');
-  const baseLabel = source === 'arcgis' ? 'CAD MAP FEED' : 'CAD RSS FEED';
-  const statusText = status === 'live' ? 'LIVE' : status === 'connecting' ? 'SYNCING' : 'OFFLINE';
-  lbl.textContent = `${baseLabel} · ${statusText}`;
+  if (lbl && SOURCE_LABELS[source]) {
+    const statusText = status === 'live' ? 'LIVE' : status === 'connecting' ? 'SYNCING' : 'OFFLINE';
+    lbl.textContent = `${SOURCE_LABELS[source]} · ${statusText}`;
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -514,6 +631,18 @@ function toSortKey(value) {
   if (typeof value === 'number') return value;
   const d = new Date(value);
   return isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+function relativeTime(ms) {
+  if (!ms) return '';
+  const diffSec = Math.round((Date.now() - ms) / 1000);
+  if (diffSec < 0) return 'just now';
+  if (diffSec < 60) return `${diffSec}s ago`;
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  return `${Math.round(diffHr / 24)}d ago`;
 }
 
 function formatMaybeDate(value) {
