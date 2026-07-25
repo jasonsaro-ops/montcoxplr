@@ -1,79 +1,642 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Montgomery County 911 Incidents Dashboard</title>
-    
-    <!-- Leaflet CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
-    
-    <!-- Dashboard Styling -->
-    <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f4f6f9;
-            color: #333;
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-        }
-        header {
-            background-color: #1e293b;
-            color: white;
-            padding: 15px 20px;
-        }
-        header h1 {
-            font-size: 1.25rem;
-        }
-        main {
-            flex: 1;
-            display: flex;
-            padding: 15px;
-        }
-        .map-card {
-            flex: 1;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-        .map-card h2 {
-            padding: 12px 15px;
-            font-size: 1rem;
-            background: #f8fafc;
-            border-bottom: 1px solid #e2e8f0;
-        }
-        #map {
-            flex: 1;
-            width: 100%;
-        }
-    </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MONTCO EOC · Live Incident Monitor</title>
+<meta name="description" content="Real-time Fire, EMS and Traffic incident monitor for Montgomery County, PA, sourced from the county's public CAD feeds." />
+
+<!-- Leaflet -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+<!-- Fonts: Rajdhani for command-console display type, JetBrains Mono for data readouts, Inter for body -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    /* ---- token system ---- */
+    --void:        #060a10;
+    --panel:       #0b121a;
+    --panel-raise: #101a24;
+    --line:        #1c2836;
+    --line-soft:   #141e2a;
+    --text-hi:     #dbe8f2;
+    --text-mid:    #8ea1b3;
+    --text-dim:    #4f6478;
+
+    --amber:       #ffb020;   /* console chrome accent */
+    --amber-dim:   #6b4d16;
+
+    --fire:        #ff4438;
+    --fire-dim:    #401612;
+    --ems:         #2f8fff;
+    --ems-dim:     #0f2a4d;
+    --traffic:     #f5c142;
+    --traffic-dim: #4d3d0f;
+    --other:       #9c7cf0;
+    --other-dim:   #2c2450;
+
+    --ok:          #35d07f;
+    --warn:        #ff9f43;
+    --err:         #ff5252;
+
+    --font-display: 'Rajdhani', sans-serif;
+    --font-mono:    'JetBrains Mono', monospace;
+    --font-body:    'Inter', sans-serif;
+  }
+
+  *{ box-sizing: border-box; margin:0; padding:0; }
+
+  html,body{
+    height:100%;
+    background: var(--void);
+    color: var(--text-hi);
+    font-family: var(--font-body);
+    overflow: hidden;
+  }
+
+  ::-webkit-scrollbar{ width:8px; height:8px; }
+  ::-webkit-scrollbar-track{ background: var(--panel); }
+  ::-webkit-scrollbar-thumb{ background: var(--line); border-radius:4px; }
+  ::-webkit-scrollbar-thumb:hover{ background: var(--text-dim); }
+
+  a { color: var(--ems); }
+
+  /* Background: faint grid + vignette, signature "ops-console" atmosphere */
+  body::before{
+    content:"";
+    position:fixed; inset:0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+    background-size: 42px 42px;
+    pointer-events:none;
+    z-index:0;
+  }
+  body::after{
+    content:"";
+    position:fixed; inset:0;
+    background: radial-gradient(ellipse at 50% 0%, rgba(47,143,255,0.06), transparent 60%);
+    pointer-events:none;
+    z-index:0;
+  }
+
+  #app{
+    position:relative;
+    z-index:1;
+    height:100vh;
+    display:grid;
+    grid-template-rows: auto 1fr auto;
+    grid-template-areas: "header" "main" "ticker";
+  }
+
+  /* ============ HEADER ============ */
+  header.hdr{
+    grid-area: header;
+    display:flex;
+    align-items:center;
+    gap:18px;
+    padding: 10px 18px;
+    background: linear-gradient(180deg, var(--panel-raise), var(--panel));
+    border-bottom: 1px solid var(--line);
+    box-shadow: 0 2px 18px rgba(0,0,0,0.5);
+  }
+
+  .crest{
+    width:38px; height:38px;
+    border:1.5px solid var(--amber);
+    border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    position:relative;
+    flex-shrink:0;
+    overflow:hidden;
+  }
+  .crest svg{ width:20px; height:20px; fill: var(--amber); }
+  .crest .sweep{
+    position:absolute; inset:0;
+    background: conic-gradient(from 0deg, transparent 0deg, rgba(255,176,32,0.55) 18deg, transparent 40deg);
+    animation: spin 4s linear infinite;
+  }
+  @keyframes spin{ to{ transform: rotate(360deg);} }
+
+  .hdr-title{ line-height:1.1; }
+  .hdr-title .eyebrow{
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--amber);
+    text-transform: uppercase;
+  }
+  .hdr-title h1{
+    font-family: var(--font-display);
+    font-weight:700;
+    font-size: 22px;
+    letter-spacing: 0.5px;
+    color: var(--text-hi);
+  }
+
+  .hdr-spacer{ flex:1; }
+
+  .status-rail{
+    display:flex;
+    gap:10px;
+    align-items:center;
+  }
+  .status-chip{
+    display:flex; align-items:center; gap:6px;
+    padding: 5px 10px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-mid);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .dot{
+    width:7px; height:7px; border-radius:50%;
+    background: var(--text-dim);
+    box-shadow: none;
+    flex-shrink:0;
+  }
+  .dot.live{ background: var(--ok); box-shadow: 0 0 8px var(--ok); animation: pulse-dot 2s ease-in-out infinite; }
+  .dot.degraded{ background: var(--warn); box-shadow: 0 0 8px var(--warn); }
+  .dot.down{ background: var(--err); box-shadow: 0 0 8px var(--err); }
+  @keyframes pulse-dot{ 0%,100%{ opacity:1;} 50%{ opacity:0.45;} }
+
+  .clock-block{
+    text-align:right;
+    font-family: var(--font-mono);
+    padding-left: 14px;
+    border-left: 1px solid var(--line);
+  }
+  #clock-local{ font-size:18px; font-weight:600; color: var(--text-hi); letter-spacing:1px; }
+  #clock-date{ font-size:10px; color: var(--text-mid); letter-spacing:1px; text-transform:uppercase; }
+
+  /* ============ MAIN GRID ============ */
+  main.grid{
+    grid-area: main;
+    display:grid;
+    grid-template-columns: 230px 1fr 340px;
+    overflow:hidden;
+  }
+
+  .rail{
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    padding: 14px 12px;
+    overflow-y:auto;
+    display:flex;
+    flex-direction:column;
+    gap: 14px;
+  }
+
+  .panel-label{
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 2.5px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .stat-card{
+    background: var(--panel-raise);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line);
+    border-radius: 4px;
+    padding: 10px 12px;
+    cursor:pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .stat-card:hover{ background: #16212d; }
+  .stat-card.active{ background:#16212d; }
+  .stat-card[data-cat="fire"]{ border-left-color: var(--fire); }
+  .stat-card[data-cat="ems"]{ border-left-color: var(--ems); }
+  .stat-card[data-cat="traffic"]{ border-left-color: var(--traffic); }
+  .stat-card[data-cat="other"]{ border-left-color: var(--other); }
+  .stat-card[data-cat="all"]{ border-left-color: var(--amber); }
+
+  .stat-card .n{
+    font-family: var(--font-display);
+    font-size: 30px;
+    font-weight:700;
+    line-height:1;
+    color: var(--text-hi);
+  }
+  .stat-card .label{
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    color: var(--text-mid);
+    text-transform: uppercase;
+    margin-top:3px;
+  }
+
+  .legend{
+    display:flex; flex-direction:column; gap:6px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-mid);
+  }
+  .legend-row{ display:flex; align-items:center; gap:8px; }
+  .swatch{ width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+  .swatch.fire{ background: var(--fire); box-shadow:0 0 6px var(--fire); }
+  .swatch.ems{ background: var(--ems); box-shadow:0 0 6px var(--ems); }
+  .swatch.traffic{ background: var(--traffic); box-shadow:0 0 6px var(--traffic); }
+  .swatch.other{ background: var(--other); box-shadow:0 0 6px var(--other); }
+
+  .aux-block{
+    background: var(--panel-raise);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 10px 12px;
+  }
+  .aux-block h3{
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing:1.5px;
+    color: var(--text-mid);
+    text-transform:uppercase;
+    margin-bottom:8px;
+  }
+  .aux-block p{
+    font-size: 11.5px;
+    color: var(--text-mid);
+    line-height:1.5;
+    margin-bottom: 8px;
+  }
+  .aux-btn{
+    display:inline-block;
+    width:100%;
+    text-align:center;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    color: var(--text-hi);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    text-decoration:none;
+    padding: 8px 6px;
+    border-radius: 3px;
+    cursor:pointer;
+    transition: all 0.15s ease;
+  }
+  .aux-btn:hover{ border-color: var(--amber); color: var(--amber); }
+
+  #radio-embed{ margin-top:6px; display:none; }
+  #radio-embed.open{ display:block; }
+  #radio-embed iframe{ width:100%; height:150px; border:0; border-radius:3px; }
+
+  /* ============ MAP ============ */
+  .map-wrap{ position:relative; }
+  #map{ width:100%; height:100%; background: var(--void); }
+
+  .map-badge{
+    position:absolute; top:12px; left:12px; z-index:500;
+    background: rgba(11,18,26,0.88);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-mid);
+    letter-spacing: 1px;
+    backdrop-filter: blur(4px);
+  }
+  .map-badge b{ color: var(--amber); }
+
+  .demo-banner{
+    position:absolute; top:12px; left:50%; transform:translateX(-50%);
+    z-index:600;
+    background: rgba(255,82,82,0.15);
+    border: 1px solid var(--err);
+    color: #ffb4b0;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 6px 14px;
+    border-radius: 4px;
+    display:none;
+    backdrop-filter: blur(4px);
+  }
+  .demo-banner.show{ display:block; }
+
+  /* ============ FEED RAIL ============ */
+  .feed-rail{
+    background: var(--panel);
+    border-left: 1px solid var(--line);
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+  }
+  .feed-head{
+    padding: 12px 14px 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .feed-head .panel-label{ margin-bottom:6px; }
+  .feed-filters{ display:flex; gap:6px; flex-wrap:wrap; }
+  .filter-btn{
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 4px 8px;
+    border-radius: 3px;
+    border: 1px solid var(--line);
+    background: var(--panel-raise);
+    color: var(--text-mid);
+    cursor:pointer;
+  }
+  .filter-btn.active{ color: var(--void); background: var(--amber); border-color: var(--amber); font-weight:600; }
+
+  .feed-list{
+    flex:1;
+    overflow-y:auto;
+    padding: 8px;
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+  }
+
+  .incident-card{
+    background: var(--panel-raise);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--text-dim);
+    border-radius: 4px;
+    padding: 9px 10px;
+    animation: fade-in 0.35s ease;
+    cursor:pointer;
+  }
+  .incident-card:hover{ border-color: var(--amber); }
+  .incident-card[data-cat="fire"]{ border-left-color: var(--fire); }
+  .incident-card[data-cat="ems"]{ border-left-color: var(--ems); }
+  .incident-card[data-cat="traffic"]{ border-left-color: var(--traffic); }
+  .incident-card[data-cat="other"]{ border-left-color: var(--other); }
+  @keyframes fade-in{ from{ opacity:0; transform: translateY(-4px);} to{ opacity:1; transform:none;} }
+
+  .incident-card .top-row{
+    display:flex; justify-content:space-between; align-items:baseline;
+    gap:8px;
+  }
+  .incident-card .type{
+    font-family: var(--font-display);
+    font-weight:600;
+    font-size: 13.5px;
+    color: var(--text-hi);
+    text-transform: uppercase;
+  }
+  .incident-card .time{
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    color: var(--text-dim);
+    white-space:nowrap;
+  }
+  .incident-card .loc{
+    font-size: 11.5px;
+    color: var(--text-mid);
+    margin-top: 3px;
+    line-height:1.4;
+  }
+  .incident-card .meta{
+    display:flex; gap:10px;
+    margin-top: 5px;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    color: var(--text-dim);
+    text-transform:uppercase;
+  }
+
+  .feed-empty{
+    text-align:center;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 30px 10px;
+    letter-spacing:1px;
+  }
+
+  /* ============ TICKER ============ */
+  .ticker-bar{
+    grid-area: ticker;
+    background: var(--panel-raise);
+    border-top: 1px solid var(--line);
+    display:flex;
+    align-items:stretch;
+    height: 32px;
+    overflow:hidden;
+  }
+  .ticker-label{
+    background: var(--amber);
+    color: var(--void);
+    font-family: var(--font-mono);
+    font-weight:700;
+    font-size: 10.5px;
+    letter-spacing: 1.5px;
+    display:flex;
+    align-items:center;
+    padding: 0 12px;
+    flex-shrink:0;
+  }
+  .ticker-track{
+    flex:1;
+    overflow:hidden;
+    position:relative;
+    display:flex;
+    align-items:center;
+  }
+  .ticker-content{
+    display:inline-flex;
+    white-space:nowrap;
+    animation: ticker-scroll 45s linear infinite;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-mid);
+    padding-left:100%;
+  }
+  .ticker-content span{ margin-right: 48px; }
+  .ticker-content .tk-fire{ color: var(--fire); }
+  .ticker-content .tk-ems{ color: var(--ems); }
+  .ticker-content .tk-traffic{ color: var(--traffic); }
+  @keyframes ticker-scroll{ from{ transform: translateX(0);} to{ transform: translateX(-100%);} }
+
+  @media (prefers-reduced-motion: reduce){
+    .ticker-content{ animation: none; }
+    .crest .sweep{ animation: none; }
+    .dot.live{ animation: none; }
+  }
+
+  /* Leaflet marker pulse (custom divIcon uses this class) */
+  .pulse-marker{ position:relative; width:16px; height:16px; }
+  .pulse-marker .core{
+    position:absolute; top:4px; left:4px; width:8px; height:8px;
+    border-radius:50%;
+    border: 1.5px solid rgba(255,255,255,0.85);
+  }
+  .pulse-marker .ring{
+    position:absolute; inset:0;
+    border-radius:50%;
+    opacity:0.55;
+    animation: ring-pulse 1.8s ease-out infinite;
+  }
+  @keyframes ring-pulse{
+    0%{ transform: scale(0.4); opacity:0.6; }
+    100%{ transform: scale(1.9); opacity:0; }
+  }
+  .leaflet-popup-content-wrapper{
+    background: var(--panel-raise);
+    color: var(--text-hi);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+  }
+  .leaflet-popup-tip{ background: var(--panel-raise); }
+  .popup-inner{ font-family: var(--font-body); font-size:12.5px; min-width:180px; }
+  .popup-inner .p-type{ font-family:var(--font-display); font-weight:700; font-size:14px; margin-bottom:4px; text-transform:uppercase; }
+  .popup-inner .p-row{ color: var(--text-mid); font-size:11px; margin-top:2px; }
+
+  /* ============ RESPONSIVE ============ */
+  @media (max-width: 980px){
+    main.grid{ grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
+    .rail{ display:none; }
+    .feed-rail{ height: 220px; border-left:0; border-top:1px solid var(--line); }
+    .map-wrap{ min-height: 260px; }
+  }
+</style>
 </head>
 <body>
 
-    <header>
-        <h1>Montgomery County Operations Dashboard</h1>
-    </header>
+<div id="app">
 
-    <main>
-        <section class="map-card">
-            <h2>Live 911 Incidents</h2>
-            <div id="map"></div>
-        </section>
-    </main>
+  <header class="hdr">
+    <div class="crest">
+      <div class="sweep"></div>
+      <svg viewBox="0 0 24 24"><path d="M12 2 2 7v6c0 5 4.2 9 10 9s10-4 10-9V7l-10-5zm0 2.2 8 4V13c0 4-3.4 7.4-8 7.8V4.2z"/></svg>
+    </div>
+    <div class="hdr-title">
+      <div class="eyebrow">Montgomery County · Dept. of Public Safety</div>
+      <h1>EOC LIVE INCIDENT MONITOR</h1>
+    </div>
 
-    <!-- Leaflet JS -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-    
-    <!-- App Script -->
-    <script src="app.js"></script>
+    <div class="hdr-spacer"></div>
+
+    <div class="status-rail" id="status-rail">
+      <div class="status-chip"><span class="dot" id="dot-arcgis"></span><span id="lbl-arcgis">CAD MAP FEED</span></div>
+      <div class="status-chip"><span class="dot" id="dot-rss"></span><span id="lbl-rss">CAD RSS FEED</span></div>
+      <div class="status-chip"><span class="dot" id="dot-refresh"></span><span id="lbl-refresh">NEXT SYNC —</span></div>
+    </div>
+
+    <div class="clock-block">
+      <div id="clock-local">--:--:--</div>
+      <div id="clock-date">-- --- ----</div>
+    </div>
+  </header>
+
+  <main class="grid">
+
+    <!-- LEFT RAIL: stats + legend + radio -->
+    <aside class="rail">
+      <div>
+        <div class="panel-label">Active Incidents</div>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <div class="stat-card active" data-cat="all">
+            <div class="n" id="stat-all">0</div>
+            <div class="label">All Active</div>
+          </div>
+          <div class="stat-card" data-cat="fire">
+            <div class="n" id="stat-fire">0</div>
+            <div class="label">Fire</div>
+          </div>
+          <div class="stat-card" data-cat="ems">
+            <div class="n" id="stat-ems">0</div>
+            <div class="label">EMS</div>
+          </div>
+          <div class="stat-card" data-cat="traffic">
+            <div class="n" id="stat-traffic">0</div>
+            <div class="label">Traffic</div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="panel-label">Map Key</div>
+        <div class="legend">
+          <div class="legend-row"><span class="swatch fire"></span> Fire dispatch</div>
+          <div class="legend-row"><span class="swatch ems"></span> EMS dispatch</div>
+          <div class="legend-row"><span class="swatch traffic"></span> Traffic / MVA</div>
+          <div class="legend-row"><span class="swatch other"></span> Other / unclassified</div>
+        </div>
+      </div>
+
+      <div class="aux-block">
+        <h3>Radio Traffic</h3>
+        <p>Live dispatch audio via Broadcastify. Set a feed ID in <code>app.js</code> → <code>CONFIG.sources.broadcastify.feedId</code> to enable the embedded player.</p>
+        <button class="aux-btn" id="toggle-radio">Show Player</button>
+        <div id="radio-embed"></div>
+      </div>
+
+      <div class="aux-block">
+        <h3>PulsePoint</h3>
+        <p>PulsePoint Respond has no public web-embeddable feed — it's a mobile app tied to agency CAD subscriptions. Use the app directly for citizen CPR/AED alerting.</p>
+        <a class="aux-btn" href="https://www.pulsepoint.org/" target="_blank" rel="noopener">Open PulsePoint.org</a>
+      </div>
+
+      <div class="aux-block">
+        <h3>Sources</h3>
+        <p style="margin-bottom:4px;">
+          <a href="https://data-montcopa.opendata.arcgis.com/datasets/montcopa::montgomery-county-911-incidents" target="_blank" rel="noopener">Montco ArcGIS 911 Incidents</a>
+        </p>
+        <p style="margin-bottom:4px;">
+          <a href="https://webapp07.montcopa.org/eoc/cadinfo/livecadrss.asp" target="_blank" rel="noopener">Montco WebCAD RSS</a>
+        </p>
+        <p style="margin-bottom:0;">
+          <a href="https://www.montgomerycountypa.gov/departments/department-public-safety/webcad-active-incidents" target="_blank" rel="noopener">WebCAD Active Incidents</a>
+        </p>
+      </div>
+    </aside>
+
+    <!-- CENTER: MAP -->
+    <div class="map-wrap">
+      <div id="map"></div>
+      <div class="map-badge">EPSG:4326 · <b id="badge-count">0</b> plotted · updated <span id="badge-time">—</span></div>
+      <div class="demo-banner" id="demo-banner">⚠ Live feeds unreachable — showing sample data</div>
+    </div>
+
+    <!-- RIGHT: LIVE FEED -->
+    <aside class="feed-rail">
+      <div class="feed-head">
+        <div class="panel-label">Live Dispatch Feed</div>
+        <div class="feed-filters">
+          <button class="filter-btn active" data-filter="all">All</button>
+          <button class="filter-btn" data-filter="fire">Fire</button>
+          <button class="filter-btn" data-filter="ems">EMS</button>
+          <button class="filter-btn" data-filter="traffic">Traffic</button>
+        </div>
+      </div>
+      <div class="feed-list" id="feed-list">
+        <div class="feed-empty">CONNECTING TO CAD FEED…</div>
+      </div>
+    </aside>
+
+  </main>
+
+  <div class="ticker-bar">
+    <div class="ticker-label">LIVE DISPATCH</div>
+    <div class="ticker-track">
+      <div class="ticker-content" id="ticker-content">
+        <span>Awaiting incident data…</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
