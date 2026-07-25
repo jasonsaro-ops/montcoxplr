@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>MONTCO EOC · Live Incident Monitor</title>
-<meta name="description" content="Real-time Fire, EMS and Traffic incident monitor for Montgomery County, PA, sourced from the county's public CAD feeds." />
+<title>MONTCOXPLR · Live Incident Monitor</title>
+<meta name="description" content="MONTCOXPLR — real-time Fire, EMS and Traffic incident monitor for Montgomery County, PA, sourced from the county's public CAD feeds." />
 
 <!-- Leaflet -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -181,7 +181,7 @@
   main.grid{
     grid-area: main;
     display:grid;
-    grid-template-columns: 230px 1fr 340px;
+    grid-template-columns: 220px 1fr 400px;
     overflow:hidden;
   }
 
@@ -289,9 +289,40 @@
   }
   .aux-btn:hover{ border-color: var(--amber); color: var(--amber); }
 
-  #radio-embed{ margin-top:6px; display:none; }
-  #radio-embed.open{ display:block; }
-  #radio-embed iframe{ width:100%; height:150px; border:0; border-radius:3px; }
+  .oos-list{
+    display:flex; flex-direction:column; gap:6px;
+    overflow-y:auto;
+    max-height: 260px;
+    margin-top: 2px;
+  }
+  .oos-item{
+    background: var(--panel);
+    border: 1px solid var(--line-soft);
+    border-left: 3px solid var(--text-dim);
+    border-radius: 3px;
+    padding: 6px 8px;
+  }
+  .oos-item .oos-unit{
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight:600;
+    color: var(--text-hi);
+    letter-spacing: 0.5px;
+  }
+  .oos-item .oos-detail{
+    font-size: 10.5px;
+    color: var(--text-mid);
+    margin-top:2px;
+    line-height:1.4;
+  }
+  .oos-empty{
+    text-align:center;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 1px;
+    padding: 16px 6px;
+  }
 
   /* ============ MAP ============ */
   .map-wrap{ position:relative; }
@@ -375,6 +406,7 @@
     cursor:pointer;
   }
   .incident-card:hover{ border-color: var(--amber); }
+  .incident-card.selected{ background:#182632; border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber) inset; }
   .incident-card[data-cat="fire"]{ border-left-color: var(--fire); }
   .incident-card[data-cat="ems"]{ border-left-color: var(--ems); }
   .incident-card[data-cat="traffic"]{ border-left-color: var(--traffic); }
@@ -405,12 +437,36 @@
     line-height:1.4;
   }
   .incident-card .meta{
-    display:flex; gap:10px;
-    margin-top: 5px;
+    display:flex; gap:8px; flex-wrap:wrap;
+    margin-top: 6px;
     font-family: var(--font-mono);
     font-size: 9.5px;
     color: var(--text-dim);
     text-transform:uppercase;
+  }
+  .incident-card .meta span{
+    background: var(--panel);
+    border: 1px solid var(--line-soft);
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+  .incident-card .meta span.geo-yes{ color: var(--ok); border-color: rgba(53,208,127,0.3); }
+  .incident-card .meta span.geo-no{ color: var(--text-dim); }
+  .incident-card .desc{
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 4px;
+    font-style: italic;
+    line-height:1.4;
+  }
+  .incident-card .zoom-hint{
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--amber);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-top: 6px;
+    display:flex; align-items:center; gap:4px;
   }
 
   .feed-empty{
@@ -520,7 +576,7 @@
     </div>
     <div class="hdr-title">
       <div class="eyebrow">Montgomery County · Dept. of Public Safety</div>
-      <h1>EOC LIVE INCIDENT MONITOR</h1>
+      <h1>MONTCOXPLR <span style="color:var(--text-mid); font-weight:600;">— Live Incident Monitor</span></h1>
     </div>
 
     <div class="hdr-spacer"></div>
@@ -573,17 +629,14 @@
         </div>
       </div>
 
-      <div class="aux-block">
-        <h3>Radio Traffic</h3>
-        <p>Live dispatch audio via Broadcastify. Set a feed ID in <code>app.js</code> → <code>CONFIG.sources.broadcastify.feedId</code> to enable the embedded player.</p>
-        <button class="aux-btn" id="toggle-radio">Show Player</button>
-        <div id="radio-embed"></div>
-      </div>
-
-      <div class="aux-block">
-        <h3>PulsePoint</h3>
-        <p>PulsePoint Respond has no public web-embeddable feed — it's a mobile app tied to agency CAD subscriptions. Use the app directly for citizen CPR/AED alerting.</p>
-        <a class="aux-btn" href="https://www.pulsepoint.org/" target="_blank" rel="noopener">Open PulsePoint.org</a>
+      <div class="aux-block" style="flex:1; display:flex; flex-direction:column; min-height:0;">
+        <h3 style="display:flex; align-items:center; justify-content:space-between;">
+          <span>Units Out of Service</span>
+          <span class="dot" id="dot-oos" style="width:6px;height:6px;"></span>
+        </h3>
+        <div id="oos-list" class="oos-list">
+          <div class="oos-empty">CONNECTING…</div>
+        </div>
       </div>
 
       <div class="aux-block">
@@ -595,7 +648,7 @@
           <a href="https://webapp07.montcopa.org/eoc/cadinfo/livecadrss.asp" target="_blank" rel="noopener">Montco WebCAD RSS</a>
         </p>
         <p style="margin-bottom:0;">
-          <a href="https://www.montgomerycountypa.gov/departments/department-public-safety/webcad-active-incidents" target="_blank" rel="noopener">WebCAD Active Incidents</a>
+          <a href="https://www.montgomerycountypa.gov/departments/department-public-safety/webcad-active-incidents/webcad-units-out-service-oos" target="_blank" rel="noopener">WebCAD Units OOS</a>
         </p>
       </div>
     </aside>
