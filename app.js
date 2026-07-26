@@ -61,6 +61,14 @@ const CONFIG = {
   },
 
   sources: {
+    // Your Cloudflare Worker relay. Set this once it's deployed — see
+    // DEPLOY.md. Format: https://<worker-name>.<your-subdomain>.workers.dev
+    // (no trailing slash). Leave as '' to skip straight to the public
+    // CORS-proxy fallbacks below.
+    worker: {
+      baseUrl: ''   // <-- put your workers.dev URL here, e.g. 'https://montcoxplr-proxy.jsaro.workers.dev'
+    },
+
     // Tried in order; first one that returns usable geometry wins.
     arcgisCandidates: [
       'https://hub.arcgis.com/api/v3/datasets/b438c9b5aa684ccc87c6f0058d3ff6f6_0/downloads/data?format=geojson&spatialRefId=4326',
@@ -70,8 +78,8 @@ const CONFIG = {
 
     rss: {
       url: 'https://webapp07.montcopa.org/eoc/cadinfo/livecadrss.asp',
-      // Public CORS proxies — free tier, best-effort, may rate-limit. Swap
-      // in your own tiny proxy (e.g. a Cloudflare Worker) for production.
+      // Public CORS proxies used only if the Worker above is empty/down —
+      // free tier, best-effort, may rate-limit.
       corsProxies: [
         (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
         (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`
@@ -125,11 +133,28 @@ document.addEventListener('DOMContentLoaded', () => {
   initMap();
   initClock();
   initFilters();
+  initResetView();
   refreshAll();
   refreshOos();
   setInterval(refreshAll, CONFIG.refreshIntervalMs);
   setInterval(refreshOos, CONFIG.refreshIntervalMs);
 });
+
+// ---------------------------------------------------------------------
+// RESET VIEW
+// ---------------------------------------------------------------------
+function initResetView() {
+  const btn = document.getElementById('reset-view-btn');
+  if (!btn) return;
+  btn.addEventListener('click', resetMapView);
+}
+
+function resetMapView() {
+  state.selectedId = null;
+  document.querySelectorAll('.incident-card').forEach((c) => c.classList.remove('selected'));
+  state.map.closePopup();
+  state.map.flyTo(CONFIG.map.center, CONFIG.map.zoom, { animate: true, duration: 0.8 });
+}
 
 // ---------------------------------------------------------------------
 // MAP
@@ -292,14 +317,14 @@ function normalizeArcgisFeature(feature, idx) {
 }
 
 // ---------------------------------------------------------------------
-// DATA FETCHING — RSS (secondary, text-only, needs a CORS proxy)
+// DATA FETCHING — RSS (secondary, text-only)
+// Tries the Cloudflare Worker relay first (fast, cached, reliable), then
+// falls back to public CORS proxies hitting the county page directly.
 // ---------------------------------------------------------------------
 async function fetchRss() {
-  const { url, corsProxies } = CONFIG.sources.rss;
-
-  for (const buildProxyUrl of corsProxies) {
+  for (const url of buildCandidateUrls('rss')) {
     try {
-      const res = await fetch(buildProxyUrl(url), { cache: 'no-store' });
+      const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) continue;
       const text = await res.text();
       const items = parseRssItems(text);
@@ -313,6 +338,19 @@ async function fetchRss() {
   }
   setSourceStatus('rss', 'down');
   return null;
+}
+
+// Builds the ordered list of URLs to try for a given feed ('rss' | 'oos'):
+// the Worker relay first (if configured), then each public CORS proxy
+// wrapping the direct county URL.
+function buildCandidateUrls(kind) {
+  const urls = [];
+  const workerBase = CONFIG.sources.worker.baseUrl;
+  if (workerBase) urls.push(`${workerBase.replace(/\/+$/, '')}/${kind}`);
+
+  const src = CONFIG.sources[kind];
+  src.corsProxies.forEach((buildProxyUrl) => urls.push(buildProxyUrl(src.url)));
+  return urls;
 }
 
 function parseRssItems(xmlText) {
@@ -353,11 +391,9 @@ async function refreshOos() {
 }
 
 async function fetchOos() {
-  const { url, corsProxies } = CONFIG.sources.oos;
-
-  for (const buildProxyUrl of corsProxies) {
+  for (const url of buildCandidateUrls('oos')) {
     try {
-      const res = await fetch(buildProxyUrl(url), { cache: 'no-store' });
+      const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) continue;
       const html = await res.text();
       const units = parseOosHtml(html);
@@ -531,12 +567,19 @@ function renderTicker() {
   const el = document.getElementById('ticker-content');
   if (state.incidents.length === 0) {
     el.innerHTML = '<span>No active incidents reported.</span>';
+    el.style.animationDuration = '40s';
     return;
   }
-  el.innerHTML = state.incidents.slice(0, 25).map((i) => {
+  const items = state.incidents.slice(0, 25);
+  el.innerHTML = items.map((i) => {
     const cls = i.cat === 'fire' ? 'tk-fire' : i.cat === 'ems' ? 'tk-ems' : i.cat === 'traffic' ? 'tk-traffic' : '';
     return `<span class="${cls}">● ${escapeHtml(i.type)} — ${escapeHtml(i.address)}${i.municipality ? ', ' + escapeHtml(i.municipality) : ''}</span>`;
   }).join('');
+
+  // Slow, unhurried pace: roughly 9s of scroll per item, floor of 90s so
+  // it never feels rushed even with just one or two incidents.
+  const duration = Math.max(90, items.length * 9);
+  el.style.animationDuration = `${duration}s`;
 }
 
 // ---------------------------------------------------------------------
