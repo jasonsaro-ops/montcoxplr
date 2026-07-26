@@ -69,14 +69,14 @@ const CONFIG = {
     },
 
     // Tried in order; first one that returns usable geometry wins.
-    // IMPORTANT: put the live FeatureServer query URL FIRST once you grab
-    // it (DevTools → Network → filter "query" on the Experience app page,
-    // copy the request whose URL contains "FeatureServer"). The two Hub
-    // "downloads/data" URLs below are Esri's snapshot/export API — they
-    // regenerate on their own schedule rather than querying live, which is
-    // why they can lag behind the real-time map by hours or even days.
+    // #1 is the confirmed LIVE FeatureServer query (real-time, not a
+    // snapshot) — found via DevTools on the county's Experience app. Its
+    // "type" field carries clean values: 'Fire' | 'EMS' | 'Traffic'.
+    // #2 and #3 are Esri's Hub "downloads/data" snapshot/export API —
+    // kept only as a last-resort fallback since that export can lag the
+    // live map by hours or days if the regeneration job stalls.
     arcgisCandidates: [
-      // 'https://services#.arcgis.com/XXXXXXXXXX/arcgis/rest/services/YOUR_LAYER/FeatureServer/0/query?where=1=1&outFields=*&f=geojson',
+      'https://services1.arcgis.com/kOChldNuKsox8qZD/arcgis/rest/services/Montgomery_County_911_Incidents/FeatureServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson',
       'https://hub.arcgis.com/api/v3/datasets/b438c9b5aa684ccc87c6f0058d3ff6f6_0/downloads/data?format=geojson&spatialRefId=4326',
       'https://opendata.arcgis.com/api/v3/datasets/b438c9b5aa684ccc87c6f0058d3ff6f6_0/downloads/data?format=geojson&spatialRefId=4326',
       'https://data-montcopa.opendata.arcgis.com/datasets/montcopa::montgomery-county-911-incidents.geojson'
@@ -271,10 +271,16 @@ function normalizeArcgisFeature(feature, idx) {
     return null;
   }
 
-  const type = firstDefined(props, [
+  const displayType = firstDefined(props, [
     'content', 'Content', 'category', 'Category', 'cad_type', 'CallType',
     'call_type', 'type', 'Type', 'incident_type', 'CAD_TYPE', 'nature'
   ]) || 'INCIDENT';
+
+  // The county's own categorical field — confirmed values are exactly
+  // 'Fire' | 'EMS' | 'Traffic'. Trust this over keyword-guessing whenever
+  // it's present; only fall back to the text heuristic if it's missing or
+  // holds something unexpected.
+  const rawCategory = firstDefined(props, ['type', 'Type']);
 
   const address = firstDefined(props, [
     'address', 'Address', 'location', 'Location', 'full_address', 'street'
@@ -296,17 +302,15 @@ function normalizeArcgisFeature(feature, idx) {
     'description', 'Description', 'descr', 'remarks', 'Remarks', 'details'
   ]) || '';
 
-  const searchText = `${type} ${description}`;
-
   return {
     id: `ag-${props.OBJECTID || props.objectid || props.FID || idx}`,
-    type: String(type).toUpperCase(),
+    type: String(displayType).toUpperCase(),
     address,
     municipality,
     station,
     dispatched: formatMaybeDate(dispatched),
     description,
-    cat: classify(searchText),
+    cat: classifyIncident(rawCategory, `${displayType} ${description}`),
     lat, lon,
     source: 'arcgis',
     _sortKey: toSortKey(dispatched)
@@ -601,6 +605,20 @@ function setSourceStatus(source, status) {
 // ---------------------------------------------------------------------
 // HELPERS
 // ---------------------------------------------------------------------
+// Prefers the county's own exact category field ('Fire' | 'EMS' | 'Traffic')
+// over keyword-guessing. Falls back to the fuzzy text heuristic only when
+// that field is missing or holds something unrecognized (e.g. a source
+// with a different schema, like the Hub snapshot fallbacks).
+function classifyIncident(rawCategory, fallbackText) {
+  if (rawCategory) {
+    const norm = String(rawCategory).trim().toLowerCase();
+    if (norm === 'fire') return 'fire';
+    if (norm === 'ems') return 'ems';
+    if (norm === 'traffic') return 'traffic';
+  }
+  return classify(fallbackText);
+}
+
 function classify(text) {
   for (const rule of CATEGORY_RULES) {
     if (rule.test.test(text)) return rule.cat;
