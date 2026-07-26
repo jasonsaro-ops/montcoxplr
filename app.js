@@ -1,41 +1,40 @@
 /* =========================================================================
-   MONTCO EOC — LIVE INCIDENT MONITOR
+   MONTCOXPLR — LIVE INCIDENT MONITOR
    -------------------------------------------------------------------------
    Data reality check (read this before deploying):
 
-   Montgomery County, PA publishes live CAD dispatch data two public ways:
+   INCIDENTS (Fire / EMS / Traffic) come exclusively from Montgomery
+   County's ArcGIS hosted feature layer — the same data powering the
+   county's own ArcGIS Experience app at
+   https://experience.arcgis.com/experience/028de5f59b014757bda5cc2444d1f0c9
+   and mobile dashboard at
+   https://www.arcgis.com/apps/dashboards/28de0ecb1fb14a76b9b84c042d274c59.
+   This is the ONLY source with coordinates, and it's the single source of
+   truth here — nothing else is blended in, so counts always match the
+   county's own map exactly.
 
-   1. An ArcGIS hosted feature layer with point geometry (what powers the
-      county's own ArcGIS Experience app at
-      https://experience.arcgis.com/experience/028de5f59b014757bda5cc2444d1f0c9
-      and the mobile dashboard at
-      https://www.arcgis.com/apps/dashboards/28de0ecb1fb14a76b9b84c042d274c59).
-      This is the ONLY source with coordinates, so it's what plots pins on
-      the map. Esri's Hub API resolves hosted items to GeoJSON without you
-      needing to know the private org's services#.arcgis.com hostname, via:
-        https://hub.arcgis.com/api/v3/datasets/{itemId}_0/downloads/data?format=geojson
-      That pattern is used below as the primary source. Esri hosted feature
-      services and the Hub download API are CORS-enabled by design, so this
-      works from a browser on GitHub Pages with no proxy.
+   ⚠ STALENESS GOTCHA: the two "hub.arcgis.com/.../downloads/data" and
+   the "opendata.arcgis.com/.../downloads/data" URLs below are Esri's Hub
+   *download/export* API. That's a periodically-regenerated static
+   snapshot, NOT a live query against the feature layer — if that
+   snapshot job stalls, the data can silently freeze at whatever it last
+   generated (this is what caused old dates to show up). The real fix is
+   to query the hosted FeatureServer directly, which is always live:
 
-   2. A plain RSS 2.0 feed (livecadrss.asp) with incident text but NO
-      coordinates. RSS endpoints are not CORS-enabled, so from a static
-      GitHub Pages site it can only be read through a public CORS proxy.
-      It's used here purely as a fallback for when ArcGIS is unreachable
-      (list-only, no map pins) — never blended alongside live ArcGIS data,
+   IF THE MAP FEED SHOWS STALE OR "DOWN" DATA: open the Experience app
+   link above, open your browser's DevTools → Network tab, filter for
+   "FeatureServer" or "query", reload the page, and copy the request URL
+   whose path contains "FeatureServer" — paste it as the FIRST entry in
+   CONFIG.sources.arcgisCandidates below (add
+   "&outFields=*&f=geojson" if the copied URL doesn't already return
+   GeoJSON). Once a live FeatureServer URL is in place, remove or ignore
+   the two Hub download URLs — they're just a snapshot-based fallback.
 
-   IF THE MAP FEED SHOWS AS "DOWN": Esri item IDs / hosted service URLs can
-   be rotated by the county without notice. To grab the current one in
-   under a minute: open the Experience app link above, open your browser's
-   DevTools → Network tab, filter for "FeatureServer" or "query", reload
-   the page, and copy the request URL into CONFIG.sources.arcgisCandidates
-   below (add ".../query?where=1=1&outFields=*&f=geojson" if it's missing).
-
-   3. A third public page, livecad-unitsoos.asp, lists units currently
-      Out Of Service (OOS). It's the same plain-HTML/ASP pattern as the
-      RSS feed (same webapp07 host), so it's fetched through the same
-      CORS proxy chain and parsed generically from whatever <table> rows
-      it returns.
+   UNITS OUT OF SERVICE (separate panel, not part of incident counts)
+   comes from a plain HTML page (livecad-unitsoos.asp) with no CORS
+   headers, so it's fetched through the Cloudflare Worker relay (see
+   DEPLOY.md) and parsed generically from whatever <table> rows it
+   returns.
    ========================================================================= */
 
 const CONFIG = {
@@ -70,21 +69,18 @@ const CONFIG = {
     },
 
     // Tried in order; first one that returns usable geometry wins.
+    // IMPORTANT: put the live FeatureServer query URL FIRST once you grab
+    // it (DevTools → Network → filter "query" on the Experience app page,
+    // copy the request whose URL contains "FeatureServer"). The two Hub
+    // "downloads/data" URLs below are Esri's snapshot/export API — they
+    // regenerate on their own schedule rather than querying live, which is
+    // why they can lag behind the real-time map by hours or even days.
     arcgisCandidates: [
+      // 'https://services#.arcgis.com/XXXXXXXXXX/arcgis/rest/services/YOUR_LAYER/FeatureServer/0/query?where=1=1&outFields=*&f=geojson',
       'https://hub.arcgis.com/api/v3/datasets/b438c9b5aa684ccc87c6f0058d3ff6f6_0/downloads/data?format=geojson&spatialRefId=4326',
       'https://opendata.arcgis.com/api/v3/datasets/b438c9b5aa684ccc87c6f0058d3ff6f6_0/downloads/data?format=geojson&spatialRefId=4326',
       'https://data-montcopa.opendata.arcgis.com/datasets/montcopa::montgomery-county-911-incidents.geojson'
     ],
-
-    rss: {
-      url: 'https://webapp07.montcopa.org/eoc/cadinfo/livecadrss.asp',
-      // Public CORS proxies used only if the Worker above is empty/down —
-      // free tier, best-effort, may rate-limit.
-      corsProxies: [
-        (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-        (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`
-      ]
-    },
 
     oos: {
       url: 'https://webapp07.montcopa.org/eoc/cadinfo/livecad-unitsoos.asp',
@@ -120,7 +116,7 @@ const state = {
   markers: new Map(),  // id -> Leaflet marker
   activeFilter: 'all',
   selectedId: null,
-  sourceStatus: { arcgis: 'connecting', rss: 'connecting', oos: 'connecting' },
+  sourceStatus: { arcgis: 'connecting', oos: 'connecting' },
   isDemo: false,
   map: null,
   oosUnits: []
@@ -242,7 +238,8 @@ function renderMarkers() {
 async function fetchArcgis() {
   for (const url of CONFIG.sources.arcgisCandidates) {
     try {
-      const res = await fetch(url, { cache: 'no-store' });
+      const bustedUrl = url + (url.includes('?') ? '&' : '?') + '_ts=' + Date.now();
+      const res = await fetch(bustedUrl, { cache: 'no-store' });
       if (!res.ok) continue;
       const json = await res.json();
       const features = json.features || [];
@@ -316,31 +313,7 @@ function normalizeArcgisFeature(feature, idx) {
   };
 }
 
-// ---------------------------------------------------------------------
-// DATA FETCHING — RSS (fallback only, used when ArcGIS is unreachable)
-// Tries the Cloudflare Worker relay first (fast, cached, reliable), then
-// falls back to public CORS proxies hitting the county page directly.
-// ---------------------------------------------------------------------
-async function fetchRss() {
-  for (const url of buildCandidateUrls('rss')) {
-    try {
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) continue;
-      const text = await res.text();
-      const items = parseRssItems(text);
-      if (items.length > 0) {
-        setSourceStatus('rss', 'live');
-        return items;
-      }
-    } catch (err) {
-      continue;
-    }
-  }
-  setSourceStatus('rss', 'down');
-  return null;
-}
-
-// Builds the ordered list of URLs to try for a given feed ('rss' | 'oos'):
+// Builds the ordered list of URLs to try for a given feed ('oos'):
 // the Worker relay first (if configured), then each public CORS proxy
 // wrapping the direct county URL.
 function buildCandidateUrls(kind) {
@@ -351,33 +324,6 @@ function buildCandidateUrls(kind) {
   const src = CONFIG.sources[kind];
   src.corsProxies.forEach((buildProxyUrl) => urls.push(buildProxyUrl(src.url)));
   return urls;
-}
-
-function parseRssItems(xmlText) {
-  try {
-    const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
-    const items = Array.from(doc.querySelectorAll('item'));
-    return items.map((node, idx) => {
-      const title = node.querySelector('title')?.textContent?.trim() || 'INCIDENT';
-      const desc = node.querySelector('description')?.textContent?.trim() || '';
-      const pubDate = node.querySelector('pubDate')?.textContent?.trim() || '';
-      return {
-        id: `rss-${idx}-${title}`,
-        type: title.toUpperCase(),
-        address: desc,
-        municipality: '',
-        station: '',
-        dispatched: formatMaybeDate(pubDate),
-        description: desc,
-        cat: classify(`${title} ${desc}`),
-        lat: null, lon: null, // RSS has no coordinates
-        source: 'rss',
-        _sortKey: toSortKey(pubDate)
-      };
-    });
-  } catch (err) {
-    return [];
-  }
 }
 
 // ---------------------------------------------------------------------
@@ -464,23 +410,20 @@ function renderOosList() {
 // ---------------------------------------------------------------------
 async function refreshAll() {
   setSourceStatus('arcgis', 'connecting');
-  setSourceStatus('rss', 'connecting');
   setRefreshCountdown();
 
-  const [arcgisIncidents, rssIncidents] = await Promise.all([fetchArcgis(), fetchRss()]);
+  const arcgisIncidents = await fetchArcgis();
 
   let combined = [];
   if (arcgisIncidents && arcgisIncidents.length) {
-    // ArcGIS is the authoritative, geocoded, currently-active source. When
-    // it's available, use it exclusively rather than also merging in RSS —
-    // the two sources format incident text too differently to reliably
-    // de-duplicate, and RSS is more of a rolling dispatch log than a
-    // strict "active right now" list, so blending them double-counted
-    // incidents and dragged in already-cleared calls.
     combined = arcgisIncidents;
-  } else if (rssIncidents && rssIncidents.length) {
-    // ArcGIS unreachable — fall back to RSS (list-only, no map pins).
-    combined = rssIncidents;
+  }
+
+  if (combined.length === 0 && CONFIG.demoAfterFailedSources) {
+    combined = getDemoIncidents();
+    state.isDemo = true;
+  } else {
+    state.isDemo = false;
   }
 
   if (combined.length === 0 && CONFIG.demoAfterFailedSources) {
@@ -640,8 +583,7 @@ setInterval(() => {
 }, 1000);
 
 const SOURCE_LABELS = {
-  arcgis: 'CAD MAP FEED',
-  rss: 'CAD RSS FEED'
+  arcgis: 'CAD MAP FEED'
 };
 
 function setSourceStatus(source, status) {
