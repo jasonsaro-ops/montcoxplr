@@ -119,7 +119,10 @@ const state = {
   sourceStatus: { arcgis: 'connecting', oos: 'connecting' },
   isDemo: false,
   map: null,
-  oosUnits: []
+  oosUnits: [],
+  audioEnabled: false,
+  knownIncidentIds: new Set(), // ids seen as of the last non-demo refresh
+  hasBaseline: false            // true once we've established a starting set to diff against
 };
 
 // ---------------------------------------------------------------------
@@ -130,6 +133,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initClock();
   initFilters();
   initResetView();
+  initAudioToggle();
   refreshAll();
   refreshOos();
   setInterval(refreshAll, CONFIG.refreshIntervalMs);
@@ -150,6 +154,130 @@ function resetMapView() {
   document.querySelectorAll('.incident-card').forEach((c) => c.classList.remove('selected'));
   state.map.closePopup();
   state.map.flyTo(CONFIG.map.center, CONFIG.map.zoom, { animate: true, duration: 0.8 });
+}
+
+// ---------------------------------------------------------------------
+// AUDIO ALERTS
+// Synthesized with the Web Audio API (no audio files to host) — three
+// distinct chimes so Fire, EMS, and Traffic are recognizable by ear
+// without looking at the screen.
+// ---------------------------------------------------------------------
+let audioCtx = null;
+
+function getAudioCtx() {
+  if (!audioCtx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new Ctx();
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+// Schedules a single tone: quick fade in, hold, fade out (avoids the
+// clicking pop a hard on/off would cause).
+function scheduleTone(freq, startTime, duration, waveType, peakGain) {
+  const ctx = getAudioCtx();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = waveType;
+  osc.frequency.setValueAtTime(freq, startTime);
+  gain.gain.setValueAtTime(0, startTime);
+  gain.gain.linearRampToValueAtTime(peakGain, startTime + 0.02);
+  gain.gain.linearRampToValueAtTime(0, startTime + duration);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(startTime);
+  osc.stop(startTime + duration + 0.02);
+}
+
+// FIRE — urgent alternating two-tone wail (sawtooth, higher edge)
+function playFireTone() {
+  const ctx = getAudioCtx();
+  const now = ctx.currentTime;
+  [880, 660, 880, 660].forEach((freq, i) => {
+    scheduleTone(freq, now + i * 0.15, 0.14, 'sawtooth', 0.2);
+  });
+}
+
+// EMS — calm rising two-note chime (sine, gentle)
+function playEmsTone() {
+  const ctx = getAudioCtx();
+  const now = ctx.currentTime;
+  scheduleTone(523.25, now, 0.32, 'sine', 0.2);       // C5
+  scheduleTone(784.0, now + 0.28, 0.4, 'sine', 0.2);   // G5
+}
+
+// TRAFFIC — short flat double-beep (triangle, neutral)
+function playTrafficTone() {
+  const ctx = getAudioCtx();
+  const now = ctx.currentTime;
+  scheduleTone(440, now, 0.1, 'triangle', 0.2);
+  scheduleTone(440, now + 0.17, 0.1, 'triangle', 0.2);
+}
+
+const CATEGORY_TONES = { fire: playFireTone, ems: playEmsTone, traffic: playTrafficTone };
+
+// Plays one chime per category that has a new arrival, staggered so
+// simultaneous fire+EMS+traffic dispatches don't blur into noise.
+function playAlertsForCategories(categorySet) {
+  let delay = 0;
+  ['fire', 'ems', 'traffic'].forEach((cat) => {
+    if (!categorySet.has(cat)) return;
+    setTimeout(() => CATEGORY_TONES[cat](), delay);
+    delay += 850;
+  });
+}
+
+// Compares this refresh's incident IDs against the last known set. The
+// very first real (non-demo) load just establishes the baseline —
+// otherwise every incident already active when you open the page would
+// trigger an alert.
+function detectAndAlertNewIncidents(incidents) {
+  const currentIds = new Set(incidents.map((i) => i.id));
+
+  if (state.hasBaseline) {
+    const newCats = new Set();
+    incidents.forEach((i) => {
+      if (!state.knownIncidentIds.has(i.id)) newCats.add(i.cat);
+    });
+    if (newCats.size > 0 && state.audioEnabled) {
+      playAlertsForCategories(newCats);
+    }
+  } else {
+    state.hasBaseline = true;
+  }
+
+  state.knownIncidentIds = currentIds;
+}
+
+function initAudioToggle() {
+  const btn = document.getElementById('audio-toggle-btn');
+  if (!btn) return;
+
+  let stored = null;
+  try { stored = localStorage.getItem('montcoxplr_audio_enabled'); } catch (err) { /* ignore */ }
+  state.audioEnabled = stored === 'true';
+  updateAudioToggleUI();
+
+  btn.addEventListener('click', () => {
+    state.audioEnabled = !state.audioEnabled;
+    try { localStorage.setItem('montcoxplr_audio_enabled', String(state.audioEnabled)); } catch (err) { /* ignore */ }
+
+    if (state.audioEnabled) {
+      // This click is the required user gesture to unlock audio — use it
+      // to both resume the context and give an audible confirmation.
+      getAudioCtx();
+      playTrafficTone();
+    }
+    updateAudioToggleUI();
+  });
+}
+
+function updateAudioToggleUI() {
+  const btn = document.getElementById('audio-toggle-btn');
+  const lbl = document.getElementById('lbl-audio');
+  if (!btn || !lbl) return;
+  btn.classList.toggle('on', state.audioEnabled);
+  lbl.textContent = state.audioEnabled ? 'ALERT TONES ON' : 'ALERT TONES OFF';
 }
 
 // ---------------------------------------------------------------------
@@ -430,15 +558,15 @@ async function refreshAll() {
     state.isDemo = false;
   }
 
-  if (combined.length === 0 && CONFIG.demoAfterFailedSources) {
-    combined = getDemoIncidents();
-    state.isDemo = true;
-  } else {
-    state.isDemo = false;
-  }
-
   // newest first
   combined.sort((a, b) => (b._sortKey || 0) - (a._sortKey || 0));
+
+  // Only diff against real (non-demo) data — otherwise an ArcGIS outage
+  // followed by recovery would make every currently-active incident look
+  // "new" again just because demo IDs briefly replaced them.
+  if (!state.isDemo) {
+    detectAndAlertNewIncidents(combined);
+  }
 
   state.incidents = combined;
   document.getElementById('demo-banner').classList.toggle('show', state.isDemo);
