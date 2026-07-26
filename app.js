@@ -66,7 +66,7 @@ const CONFIG = {
     // (no trailing slash). Leave as '' to skip straight to the public
     // CORS-proxy fallbacks below.
     worker: {
-      baseUrl: ''   // <-- put your workers.dev URL here, e.g. 'https://montcoxplr-proxy.jsaro.workers.dev'
+      baseUrl: 'https://montcoxplr.jasonsaro.workers.dev'
     },
 
     // Tried in order; first one that returns usable geometry wins.
