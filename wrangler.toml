@@ -1,0 +1,9 @@
+name = "montcoxplr-proxy"
+main = "worker/src/index.js"
+compatibility_date = "2025-01-01"
+
+# Restrict the CORS relay to your GitHub Pages origin. Change this if you
+# ever move the dashboard elsewhere or want to test from a second origin
+# (e.g. add a second line for http://localhost:5500 while developing).
+[vars]
+ALLOWED_ORIGIN = "https://jasonsaro-ops.github.io"
