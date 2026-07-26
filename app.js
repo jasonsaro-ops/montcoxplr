@@ -21,8 +21,8 @@
    2. A plain RSS 2.0 feed (livecadrss.asp) with incident text but NO
       coordinates. RSS endpoints are not CORS-enabled, so from a static
       GitHub Pages site it can only be read through a public CORS proxy.
-      It's used here as a secondary, list-only source (no map pins) and as
-      a live/backup indicator independent of the ArcGIS layer.
+      It's used here purely as a fallback for when ArcGIS is unreachable
+      (list-only, no map pins) — never blended alongside live ArcGIS data,
 
    IF THE MAP FEED SHOWS AS "DOWN": Esri item IDs / hosted service URLs can
    be rotated by the county without notice. To grab the current one in
@@ -100,7 +100,7 @@ const CONFIG = {
 // "FIRE SPECIAL SERVICE", "EMS - MEDICAL", "VEHICLE ACCIDENT", etc. This
 // scans whatever text fields exist rather than depending on one field name.
 const CATEGORY_RULES = [
-  { cat: 'fire',    test: /\bfire\b|\bfd\b|smoke|alarm|structure|brush|explosion/i },
+  { cat: 'fire',    test: /\bfire\b|\bfd\b|smoke|structure\s*fire|brush\s*fire|explosion/i },
   { cat: 'traffic', test: /traffic|\bmva\b|vehicle accident|collision|crash|road|highway|disabled veh/i },
   { cat: 'ems',     test: /\bems\b|medical|ambulance|rescue|cardiac|respiratory|fall victim|overdose|injury/i }
 ];
@@ -317,7 +317,7 @@ function normalizeArcgisFeature(feature, idx) {
 }
 
 // ---------------------------------------------------------------------
-// DATA FETCHING — RSS (secondary, text-only)
+// DATA FETCHING — RSS (fallback only, used when ArcGIS is unreachable)
 // Tries the Cloudflare Worker relay first (fast, cached, reliable), then
 // falls back to public CORS proxies hitting the county page directly.
 // ---------------------------------------------------------------------
@@ -470,8 +470,18 @@ async function refreshAll() {
   const [arcgisIncidents, rssIncidents] = await Promise.all([fetchArcgis(), fetchRss()]);
 
   let combined = [];
-  if (arcgisIncidents && arcgisIncidents.length) combined = combined.concat(arcgisIncidents);
-  if (rssIncidents && rssIncidents.length) combined = combined.concat(dedupeAgainst(rssIncidents, arcgisIncidents));
+  if (arcgisIncidents && arcgisIncidents.length) {
+    // ArcGIS is the authoritative, geocoded, currently-active source. When
+    // it's available, use it exclusively rather than also merging in RSS —
+    // the two sources format incident text too differently to reliably
+    // de-duplicate, and RSS is more of a rolling dispatch log than a
+    // strict "active right now" list, so blending them double-counted
+    // incidents and dragged in already-cleared calls.
+    combined = arcgisIncidents;
+  } else if (rssIncidents && rssIncidents.length) {
+    // ArcGIS unreachable — fall back to RSS (list-only, no map pins).
+    combined = rssIncidents;
+  }
 
   if (combined.length === 0 && CONFIG.demoAfterFailedSources) {
     combined = getDemoIncidents();
@@ -490,12 +500,6 @@ async function refreshAll() {
   renderStats();
   renderFeedList();
   renderTicker();
-}
-
-function dedupeAgainst(rssItems, arcgisItems) {
-  if (!arcgisItems || arcgisItems.length === 0) return rssItems;
-  const known = new Set(arcgisItems.map((i) => `${i.type}|${i.address}`.toLowerCase()));
-  return rssItems.filter((i) => !known.has(`${i.type}|${i.address}`.toLowerCase()));
 }
 
 // ---------------------------------------------------------------------
