@@ -285,9 +285,14 @@ function updateAudioToggleUI() {
 // ---------------------------------------------------------------------
 function initMap() {
   const m = L.map('map', {
-    zoomControl: true,
+    zoomControl: false,
     attributionControl: true
   }).setView(CONFIG.map.center, CONFIG.map.zoom);
+
+  // Default zoom control sits top-left, right over the map badge and any
+  // incident pins in that corner. Moved to top-right, stacked under the
+  // Reset View button instead (see .leaflet-top.leaflet-right CSS).
+  L.control.zoom({ position: 'topright' }).addTo(m);
 
   const primaryTiles = L.tileLayer(CONFIG.map.tileUrl, {
     subdomains: CONFIG.map.tileSubdomains,
