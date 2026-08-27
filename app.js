@@ -47,13 +47,13 @@ const CONFIG = {
     zoom: 11,
     minZoom: 9,
     maxZoom: 18,
-    // Correct CARTO raster path is "dark_all" (not "dark_matter") with
-    // explicit a/b/c/d subdomains — the previous build 404'd on every
-    // tile because of that path typo, which is why the map looked blank.
-    tileUrl: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    tileSubdomains: 'abcd',
-    tileAttribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    // Fallback basemap in case CARTO is ever unreachable from a given network
+    // Esri World Dark Gray Base — free raster tiles, no API key required.
+    // (CARTO's dark_all now watermarks "API key required" without a key.)
+    // Note Esri uses {z}/{y}/{x} order (not OSM's {z}/{x}/{y}).
+    tileUrl: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    tileSubdomains: '',
+    tileAttribution: 'Tiles &copy; <a href="https://www.esri.com/">Esri</a> &mdash; Source: Esri, HERE, Garmin, &copy; OpenStreetMap contributors, and the GIS user community',
+    // Fallback: standard OSM raster if Esri is unreachable
     fallbackTileUrl: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     fallbackTileSubdomains: 'abc',
     fallbackTileAttribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
