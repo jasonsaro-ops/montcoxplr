@@ -328,11 +328,12 @@
   .map-wrap{ position:relative; }
   #map{ width:100%; height:100%; background: var(--void); }
 
-  /* Esri World Dark Gray is already a neutral dark canvas. A light
-     brighten keeps street detail readable against the dark UI without
-     washing out the basemap. */
+  /* Dark-theme basemap without an API key or zoom-limited provider:
+     invert the OSM raster tiles, then hue-rotate so colors look natural
+     again (greens stay green-ish, water stays blue-ish). Markers live in
+     a separate Leaflet pane and are not affected. */
   .leaflet-tile-pane{
-    filter: brightness(1.15) contrast(1.02) saturate(1.05);
+    filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.92) saturate(0.85);
   }
 
   .map-badge{
