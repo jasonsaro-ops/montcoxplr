@@ -328,11 +328,11 @@
   .map-wrap{ position:relative; }
   #map{ width:100%; height:100%; background: var(--void); }
 
-  /* CARTO's dark_all basemap is quite dark by default (too dark to read
-     streets at a glance) — brighten it a touch via filter rather than
-     switching providers, which keeps the same reliable tile source. */
+  /* Esri World Dark Gray is already a neutral dark canvas. A light
+     brighten keeps street detail readable against the dark UI without
+     washing out the basemap. */
   .leaflet-tile-pane{
-    filter: brightness(1.38) contrast(0.94) saturate(1.05);
+    filter: brightness(1.15) contrast(1.02) saturate(1.05);
   }
 
   .map-badge{
