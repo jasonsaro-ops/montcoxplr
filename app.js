@@ -47,14 +47,16 @@ const CONFIG = {
     zoom: 11,
     minZoom: 9,
     maxZoom: 18,
-    // Esri World Dark Gray Base — free raster tiles, no API key required.
-    // (CARTO's dark_all now watermarks "API key required" without a key.)
-    // Note Esri uses {z}/{y}/{x} order (not OSM's {z}/{x}/{y}).
-    tileUrl: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
-    tileSubdomains: '',
-    tileAttribution: 'Tiles &copy; <a href="https://www.esri.com/">Esri</a> &mdash; Source: Esri, HERE, Garmin, &copy; OpenStreetMap contributors, and the GIS user community',
-    // Fallback: standard OSM raster if Esri is unreachable
-    fallbackTileUrl: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    // OpenStreetMap raster tiles (full zoom 0–19, no API key).
+    // Dark theme is applied via CSS filter on .leaflet-tile-pane in
+    // index.html — invert + hue-rotate keeps the map dark at every zoom
+    // without depending on a provider that limits max zoom or requires a key.
+    // (CARTO watermarks without a key; Esri Dark Gray stops around z16.)
+    tileUrl: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    tileSubdomains: 'abc',
+    tileAttribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    // Fallback mirror if the primary OSM CDN is blocked/unreachable
+    fallbackTileUrl: 'https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',
     fallbackTileSubdomains: 'abc',
     fallbackTileAttribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
   },
