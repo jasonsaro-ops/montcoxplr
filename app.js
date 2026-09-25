@@ -215,28 +215,20 @@ const BASEMAPS = {
     maxZoom: 19,
     invert: false
   },
-  darkmatter: {
-    label: 'Dark Matter',
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    subdomains: 'abcd',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    maxZoom: 20,
+  darkgray: {
+    label: 'Dark Gray',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    subdomains: '',
+    attribution: 'Tiles &copy; Esri',
+    maxZoom: 16,
     invert: false
   },
-  voyager: {
-    label: 'Voyager',
-    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-    subdomains: 'abcd',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    maxZoom: 20,
-    invert: false
-  },
-  positron: {
-    label: 'Light',
-    url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-    subdomains: 'abcd',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    maxZoom: 20,
+  lightgray: {
+    label: 'Light Gray',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    subdomains: '',
+    attribution: 'Tiles &copy; Esri',
+    maxZoom: 16,
     invert: false
   },
   satellite: {
@@ -253,6 +245,14 @@ const BASEMAPS = {
     subdomains: 'abc',
     attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>, <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)',
     maxZoom: 17,
+    invert: false
+  },
+  humanitarian: {
+    label: 'Humanitarian',
+    url: 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
+    subdomains: 'abc',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, HOT style',
+    maxZoom: 19,
     invert: false
   }
 };
@@ -478,18 +478,28 @@ function setBasemap(id, opts) {
     state.baseLayer = null;
   }
 
+  const maxZ = style.maxZoom || CONFIG.map.maxZoom;
+  const minZ = CONFIG.map.minZoom;
+
   const layerOpts = {
-    minZoom: CONFIG.map.minZoom,
-    maxZoom: style.maxZoom || CONFIG.map.maxZoom,
+    minZoom: minZ,
+    maxZoom: maxZ,
     attribution: style.attribution
   };
   if (style.subdomains) layerOpts.subdomains = style.subdomains;
 
   const layer = L.tileLayer(style.url, layerOpts);
-  // Insert under overlay/marker panes
   layer.addTo(state.map);
   state.baseLayer = layer;
   state.basemapId = id;
+
+  // Keep map zoom controls within this style's supported range so you
+  // never end up on blank "zoom not supported" tiles.
+  state.map.setMaxZoom(maxZ);
+  state.map.setMinZoom(minZ);
+  const z = state.map.getZoom();
+  if (z > maxZ) state.map.setZoom(maxZ);
+  if (z < minZ) state.map.setZoom(minZ);
 
   // Dark console filter only for the inverted OSM style
   const container = state.map.getContainer();
@@ -507,15 +517,14 @@ function setBasemap(id, opts) {
 function initBasemapPicker() {
   const select = document.getElementById('basemap-select');
   if (!select) return;
-  // Populate options if empty
-  if (!select.options.length) {
-    Object.keys(BASEMAPS).forEach((id) => {
-      const opt = document.createElement('option');
-      opt.value = id;
-      opt.textContent = BASEMAPS[id].label;
-      select.appendChild(opt);
-    });
-  }
+  // Always rebuild from BASEMAPS so retired key-required styles disappear
+  select.innerHTML = '';
+  Object.keys(BASEMAPS).forEach((id) => {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = BASEMAPS[id].label;
+    select.appendChild(opt);
+  });
   select.value = state.basemapId || 'dark';
   select.addEventListener('change', () => {
     setBasemap(select.value);
