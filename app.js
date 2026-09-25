@@ -3,44 +3,35 @@
    -------------------------------------------------------------------------
    Data reality check (read this before deploying):
 
-   INCIDENTS (Fire / EMS / Traffic) come exclusively from Montgomery
-   County's ArcGIS hosted feature layer — the same data powering the
-   county's own ArcGIS Experience app at
+   INCIDENTS prefer Montgomery County's ArcGIS hosted feature layer — the
+   same data powering the county's ArcGIS Experience app at
    https://experience.arcgis.com/experience/028de5f59b014757bda5cc2444d1f0c9
-   and mobile dashboard at
-   https://www.arcgis.com/apps/dashboards/28de0ecb1fb14a76b9b84c042d274c59.
-   This is the ONLY source with coordinates, and it's the single source of
-   truth here — nothing else is blended in, so counts always match the
-   county's own map exactly.
+   That layer is the ONLY source with coordinates, so map markers only
+   appear when ArcGIS is live and fresh.
 
-   ⚠ STALENESS GOTCHA: the two "hub.arcgis.com/.../downloads/data" and
-   the "opendata.arcgis.com/.../downloads/data" URLs below are Esri's Hub
-   *download/export* API. That's a periodically-regenerated static
-   snapshot, NOT a live query against the feature layer — if that
-   snapshot job stalls, the data can silently freeze at whatever it last
-   generated (this is what caused old dates to show up). The real fix is
-   to query the hosted FeatureServer directly, which is always live:
+   ⚠ STALENESS + RSS FAILOVER: ArcGIS (and the Hub snapshot URLs) can
+   silently freeze on yesterday's data while the county's public CAD is
+   still updating. After a successful ArcGIS response we check the newest
+   incident's dispatch time; if it is older than CONFIG.staleMaxAgeMs we
+   treat the feed as stale and fall through to the live WebCAD RSS feed
+   (livecadrss.asp). RSS has no coordinates — list/stats/ticker still
+   work; map markers simply stay empty and cards show "NO GEO".
 
-   IF THE MAP FEED SHOWS STALE OR "DOWN" DATA: open the Experience app
-   link above, open your browser's DevTools → Network tab, filter for
-   "FeatureServer" or "query", reload the page, and copy the request URL
-   whose path contains "FeatureServer" — paste it as the FIRST entry in
-   CONFIG.sources.arcgisCandidates below (add
-   "&outFields=*&f=geojson" if the copied URL doesn't already return
-   GeoJSON). Once a live FeatureServer URL is in place, remove or ignore
-   the two Hub download URLs — they're just a snapshot-based fallback.
+   Nature of call (FIRE ALARM, CARDIAC EMERGENCY, VEHICLE ACCIDENT, …)
+   comes from ArcGIS `incidenttype` (not the coarse `type` field which
+   is only Fire|EMS|Traffic) and from the RSS title/description.
 
-   UNITS OUT OF SERVICE (separate panel, not part of incident counts)
-   comes from a plain HTML page (livecad-unitsoos.asp) with no CORS
-   headers, so it's fetched through the Cloudflare Worker relay (see
-   DEPLOY.md) and parsed generically from whatever <table> rows it
-   returns.
+   UNITS OUT OF SERVICE (separate panel) still comes from
+   livecad-unitsoos.asp via the Cloudflare Worker / CORS proxies.
    ========================================================================= */
 
 const CONFIG = {
   refreshIntervalMs: 60000,   // county CAD data itself only updates every 4-5 min
   clockUpdateMs: 1000,
   demoAfterFailedSources: true, // show clearly-labeled demo data if everything fails
+  // If the newest ArcGIS incident is older than this, treat the feed as
+  // frozen and fall through to the live RSS CAD feed.
+  staleMaxAgeMs: 45 * 60 * 1000, // 45 minutes
 
   map: {
     center: [40.1400, -75.3200], // Montgomery County, PA centroid
@@ -70,19 +61,29 @@ const CONFIG = {
       baseUrl: 'https://montcoxplr.jasonsaro.workers.dev'
     },
 
-    // Tried in order; first one that returns usable geometry wins.
-    // #1 is the confirmed LIVE FeatureServer query (real-time, not a
-    // snapshot) — found via DevTools on the county's Experience app. Its
-    // "type" field carries clean values: 'Fire' | 'EMS' | 'Traffic'.
-    // #2 and #3 are Esri's Hub "downloads/data" snapshot/export API —
-    // kept only as a last-resort fallback since that export can lag the
-    // live map by hours or days if the regeneration job stalls.
+    // Tried in order; first one that returns usable *fresh* geometry wins.
+    // #1 is the confirmed FeatureServer query. Its coarse "type" field is
+    // 'Fire' | 'EMS' | 'Traffic'; the actual call nature lives in
+    // "incidenttype" (FIRE ALARM, CARDIAC EMERGENCY, …).
+    // #2–#4 are Esri Hub snapshot/export URLs — last-resort only; they
+    // can lag the live map by hours or days if the export job stalls.
     arcgisCandidates: [
       'https://services1.arcgis.com/kOChldNuKsox8qZD/arcgis/rest/services/Montgomery_County_911_Incidents/FeatureServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson',
       'https://hub.arcgis.com/api/v3/datasets/b438c9b5aa684ccc87c6f0058d3ff6f6_0/downloads/data?format=geojson&spatialRefId=4326',
       'https://opendata.arcgis.com/api/v3/datasets/b438c9b5aa684ccc87c6f0058d3ff6f6_0/downloads/data?format=geojson&spatialRefId=4326',
       'https://data-montcopa.opendata.arcgis.com/datasets/montcopa::montgomery-county-911-incidents.geojson'
     ],
+
+    // Live WebCAD RSS — used when ArcGIS is down OR stale. Same data as
+    // https://www.montgomerycountypa.gov/departments/department-public-safety/webcad-active-incidents
+    // No coordinates; list/stats/ticker only.
+    rss: {
+      url: 'https://webapp07.montcopa.org/eoc/cadinfo/livecadrss.asp',
+      corsProxies: [
+        (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+        (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`
+      ]
+    },
 
     oos: {
       url: 'https://webapp07.montcopa.org/eoc/cadinfo/livecad-unitsoos.asp',
@@ -118,7 +119,8 @@ const state = {
   markers: new Map(),  // id -> Leaflet marker
   activeFilter: 'all',
   selectedId: null,
-  sourceStatus: { arcgis: 'connecting', oos: 'connecting' },
+  sourceStatus: { arcgis: 'connecting', rss: 'connecting', oos: 'connecting' },
+  activeIncidentSource: null, // 'arcgis' | 'rss' | 'demo' | null
   isDemo: false,
   map: null,
   oosUnits: [],
@@ -381,17 +383,34 @@ async function fetchArcgis() {
       if (!Array.isArray(features) || features.length === 0) continue;
 
       const incidents = features.map((f, idx) => normalizeArcgisFeature(f, idx)).filter(Boolean);
-      if (incidents.length > 0) {
-        setSourceStatus('arcgis', 'live');
-        return incidents;
+      if (incidents.length === 0) continue;
+
+      // Reject silently-frozen snapshots (yesterday's data while CAD is live).
+      if (isIncidentSetStale(incidents)) {
+        console.warn('[montcoxplr] ArcGIS data is stale — falling through to RSS');
+        setSourceStatus('arcgis', 'down');
+        return null;
       }
+
+      setSourceStatus('arcgis', 'live');
+      setSourceStatus('rss', 'down'); // not needed when ArcGIS is good
+      return incidents;
     } catch (err) {
-      // try next candidate
       continue;
     }
   }
   setSourceStatus('arcgis', 'down');
   return null;
+}
+
+function isIncidentSetStale(incidents) {
+  if (!incidents || incidents.length === 0) return true;
+  let newest = 0;
+  for (const i of incidents) {
+    if (i._sortKey && i._sortKey > newest) newest = i._sortKey;
+  }
+  if (!newest) return true;
+  return (Date.now() - newest) > CONFIG.staleMaxAgeMs;
 }
 
 function normalizeArcgisFeature(feature, idx) {
@@ -406,23 +425,31 @@ function normalizeArcgisFeature(feature, idx) {
     return null;
   }
 
-  const displayType = firstDefined(props, [
-    'content', 'Content', 'category', 'Category', 'cad_type', 'CallType',
-    'call_type', 'type', 'Type', 'incident_type', 'CAD_TYPE', 'nature'
-  ]) || 'INCIDENT';
-
-  // The county's own categorical field — confirmed values are exactly
-  // 'Fire' | 'EMS' | 'Traffic'. Trust this over keyword-guessing whenever
-  // it's present; only fall back to the text heuristic if it's missing or
-  // holds something unexpected.
+  // Coarse category field is exactly 'Fire' | 'EMS' | 'Traffic'.
   const rawCategory = firstDefined(props, ['type', 'Type']);
+
+  // Actual call nature lives in incidenttype (e.g. CARDIAC EMERGENCY,
+  // FIRE ALARM, VEHICLE ACCIDENT). Prefer that over the coarse type.
+  const nature = firstDefined(props, [
+    'incidenttype', 'IncidentType', 'incident_type',
+    'content', 'Content', 'nature', 'Nature',
+    'cad_type', 'CallType', 'call_type'
+  ]);
+  // If nature is missing or is just the coarse category, fall back.
+  let displayType = nature;
+  if (!displayType || /^(fire|ems|traffic)$/i.test(String(displayType).trim())) {
+    displayType = firstDefined(props, [
+      'content', 'Content', 'category', 'Category',
+      'incidenttype', 'IncidentType'
+    ]) || rawCategory || 'INCIDENT';
+  }
 
   const address = firstDefined(props, [
     'address', 'Address', 'location', 'Location', 'full_address', 'street'
   ]) || 'Address unavailable';
 
   const municipality = firstDefined(props, [
-    'municipality', 'Municipality', 'city', 'City', 'twp', 'township'
+    'mun', 'Mun', 'municipality', 'Municipality', 'city', 'City', 'twp', 'township'
   ]) || '';
 
   const station = firstDefined(props, [
@@ -434,25 +461,127 @@ function normalizeArcgisFeature(feature, idx) {
   ]) || '';
 
   const description = firstDefined(props, [
-    'description', 'Description', 'descr', 'remarks', 'Remarks', 'details'
+    'description', 'Description', 'descr', 'remarks', 'Remarks', 'details',
+    'incidentsubtype', 'IncidentSubtype'
   ]) || '';
 
+  // Prefer GE_UPDATETIME (epoch ms) for sorting when present.
+  const sortRaw = firstDefined(props, ['GE_UPDATETIME', 'ge_updatetime']) || dispatched;
+
   return {
-    id: `ag-${props.OBJECTID || props.objectid || props.FID || idx}`,
-    type: String(displayType).toUpperCase(),
+    id: `ag-${props.OBJECTID || props.objectid || props.FID || props.incidentno || idx}`,
+    type: String(displayType).toUpperCase().replace(/^NULL$/i, 'INCIDENT'),
     address,
     municipality,
     station,
     dispatched: formatMaybeDate(dispatched),
-    description,
+    description: description && String(description).toLowerCase() !== 'null' ? String(description) : '',
     cat: classifyIncident(rawCategory, `${displayType} ${description}`),
     lat, lon,
     source: 'arcgis',
-    _sortKey: toSortKey(dispatched)
+    _sortKey: toSortKey(sortRaw)
   };
 }
 
-// Builds the ordered list of URLs to try for a given feed ('oos'):
+// ---------------------------------------------------------------------
+// DATA FETCHING — WebCAD RSS (failover when ArcGIS is down or stale)
+// ---------------------------------------------------------------------
+async function fetchRss() {
+  setSourceStatus('rss', 'connecting');
+  for (const url of buildCandidateUrls('rss')) {
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) continue;
+      const text = await res.text();
+      const incidents = parseRssFeed(text);
+      if (incidents && incidents.length > 0) {
+        setSourceStatus('rss', 'live');
+        return incidents;
+      }
+    } catch (err) {
+      continue;
+    }
+  }
+  setSourceStatus('rss', 'down');
+  return null;
+}
+
+function parseRssFeed(xmlText) {
+  try {
+    const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
+    const items = Array.from(doc.querySelectorAll('item'));
+    return items.map((item, idx) => normalizeRssItem(item, idx)).filter(Boolean);
+  } catch (err) {
+    return [];
+  }
+}
+
+function normalizeRssItem(item, idx) {
+  const title = (item.querySelector('title')?.textContent || '').trim();
+  const description = (item.querySelector('description')?.textContent || '').trim();
+  const pubDate = (item.querySelector('pubDate')?.textContent || '').trim();
+
+  // title examples: "Fire: FIRE INVESTIGATION", "EMS: CARDIAC EMERGENCY",
+  // "Traffic: VEHICLE ACCIDENT"
+  let rawCategory = '';
+  let nature = title;
+  const titleMatch = title.match(/^(Fire|EMS|Traffic)\s*:\s*(.+)$/i);
+  if (titleMatch) {
+    rawCategory = titleMatch[1];
+    nature = titleMatch[2].trim();
+  }
+
+  // description examples:
+  // "COMMERCE DR & DEAD END; UPPER POTTSGROVE; 2026-09-24 @ 16:53:08-Station:STA79;"
+  // "LEEDOM ST & GREENWOOD AVE;  JENKINTOWN; Station 382; 2026-09-24 @ 17:04:06;"
+  let address = '';
+  let municipality = '';
+  let station = '';
+  let dispatched = '';
+
+  const parts = description.split(';').map((p) => p.trim()).filter(Boolean);
+  if (parts.length >= 1) address = parts[0];
+  if (parts.length >= 2) {
+    // Second part is usually municipality, sometimes "Station XXX"
+    if (/^station\b/i.test(parts[1])) {
+      station = parts[1].replace(/^station\s*/i, '').trim();
+    } else {
+      municipality = parts[1];
+    }
+  }
+  for (const p of parts) {
+    const staMatch = p.match(/station\s*:?\s*(.+)/i);
+    if (staMatch) station = staMatch[1].trim();
+    const timeMatch = p.match(/(\d{4}-\d{2}-\d{2}\s*@\s*\d{1,2}:\d{2}:\d{2})/);
+    if (timeMatch) dispatched = timeMatch[1];
+  }
+  if (!dispatched && pubDate) dispatched = pubDate;
+
+  const displayType = (nature || title || 'INCIDENT').toUpperCase();
+
+  return {
+    id: `rss-${idx}-${hashStr(title + description)}`,
+    type: displayType,
+    address: address || 'Address unavailable',
+    municipality,
+    station,
+    dispatched: formatMaybeDate(dispatched),
+    description: '',
+    cat: classifyIncident(rawCategory, `${displayType} ${title} ${description}`),
+    lat: null,
+    lon: null,
+    source: 'rss',
+    _sortKey: toSortKey(dispatched || pubDate)
+  };
+}
+
+function hashStr(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+// Builds the ordered list of URLs to try for a given feed ('rss' | 'oos'):
 // the Worker relay first (if configured), then each public CORS proxy
 // wrapping the direct county URL.
 function buildCandidateUrls(kind) {
@@ -461,7 +590,9 @@ function buildCandidateUrls(kind) {
   if (workerBase) urls.push(`${workerBase.replace(/\/+$/, '')}/${kind}`);
 
   const src = CONFIG.sources[kind];
-  src.corsProxies.forEach((buildProxyUrl) => urls.push(buildProxyUrl(src.url)));
+  if (src && Array.isArray(src.corsProxies)) {
+    src.corsProxies.forEach((buildProxyUrl) => urls.push(buildProxyUrl(src.url)));
+  }
   return urls;
 }
 
@@ -551,32 +682,72 @@ async function refreshAll() {
   setSourceStatus('arcgis', 'connecting');
   setRefreshCountdown();
 
-  const arcgisIncidents = await fetchArcgis();
-
   let combined = [];
+  let activeSource = null;
+
+  // 1) Prefer live, non-stale ArcGIS (has coordinates for the map).
+  const arcgisIncidents = await fetchArcgis();
   if (arcgisIncidents && arcgisIncidents.length) {
     combined = arcgisIncidents;
+    activeSource = 'arcgis';
+  }
+
+  // 2) Fall back to live WebCAD RSS when ArcGIS is down or frozen.
+  if (combined.length === 0) {
+    const rssIncidents = await fetchRss();
+    if (rssIncidents && rssIncidents.length) {
+      combined = rssIncidents;
+      activeSource = 'rss';
+    }
+  } else {
+    // ArcGIS won — mark RSS idle rather than "connecting".
+    if (state.sourceStatus.rss === 'connecting') setSourceStatus('rss', 'down');
   }
 
   if (combined.length === 0 && CONFIG.demoAfterFailedSources) {
     combined = getDemoIncidents();
+    activeSource = 'demo';
     state.isDemo = true;
   } else {
     state.isDemo = false;
   }
 
+  state.activeIncidentSource = activeSource;
+
   // newest first
   combined.sort((a, b) => (b._sortKey || 0) - (a._sortKey || 0));
 
-  // Only diff against real (non-demo) data — otherwise an ArcGIS outage
-  // followed by recovery would make every currently-active incident look
-  // "new" again just because demo IDs briefly replaced them.
+  // Only diff against real (non-demo) data — otherwise an outage followed
+  // by recovery would make every currently-active incident look "new"
+  // again just because demo/rss IDs briefly replaced them.
   if (!state.isDemo) {
     detectAndAlertNewIncidents(combined);
   }
 
   state.incidents = combined;
-  document.getElementById('demo-banner').classList.toggle('show', state.isDemo);
+
+  // Refresh the primary status chip now that activeIncidentSource is known.
+  if (activeSource === 'arcgis' || activeSource === 'rss') {
+    setSourceStatus(activeSource, 'live');
+  } else if (activeSource === 'demo') {
+    const primaryLbl = document.getElementById('lbl-arcgis');
+    const primaryDot = document.getElementById('dot-arcgis');
+    if (primaryLbl) primaryLbl.textContent = 'DEMO DATA · OFFLINE';
+    if (primaryDot) primaryDot.className = 'dot down';
+  }
+
+  const demoBanner = document.getElementById('demo-banner');
+  if (demoBanner) {
+    if (state.isDemo) {
+      demoBanner.textContent = '⚠ Live feeds unreachable — showing sample data';
+      demoBanner.classList.add('show');
+    } else if (activeSource === 'rss') {
+      demoBanner.textContent = '⚠ ArcGIS map feed stale/offline — using live WebCAD RSS (list only, no map pins)';
+      demoBanner.classList.add('show');
+    } else {
+      demoBanner.classList.remove('show');
+    }
+  }
 
   renderMarkers();
   renderStats();
@@ -722,18 +893,39 @@ setInterval(() => {
 }, 1000);
 
 const SOURCE_LABELS = {
-  arcgis: 'CAD MAP FEED'
+  arcgis: 'CAD MAP FEED',
+  rss: 'WEB CAD RSS'
 };
 
 function setSourceStatus(source, status) {
   state.sourceStatus[source] = status;
   const dot = document.getElementById(`dot-${source}`);
-  dot && (dot.className = 'dot ' + (status === 'live' ? 'live' : status === 'connecting' ? 'degraded' : 'down'));
+  if (dot) {
+    dot.className = 'dot ' + (status === 'live' ? 'live' : status === 'connecting' ? 'degraded' : 'down');
+  }
 
   const lbl = document.getElementById(`lbl-${source}`);
   if (lbl && SOURCE_LABELS[source]) {
     const statusText = status === 'live' ? 'LIVE' : status === 'connecting' ? 'SYNCING' : 'OFFLINE';
     lbl.textContent = `${SOURCE_LABELS[source]} · ${statusText}`;
+  }
+
+  // Keep the primary header chip reflecting whichever incident source is active.
+  if (source === 'arcgis' || source === 'rss') {
+    const primaryDot = document.getElementById('dot-arcgis');
+    const primaryLbl = document.getElementById('lbl-arcgis');
+    if (primaryLbl && state.activeIncidentSource) {
+      const active = state.activeIncidentSource;
+      const activeStatus = state.sourceStatus[active] || status;
+      const label = active === 'rss' ? 'WEB CAD RSS' : active === 'demo' ? 'DEMO DATA' : 'CAD MAP FEED';
+      const statusText = activeStatus === 'live' ? 'LIVE'
+        : activeStatus === 'connecting' ? 'SYNCING' : 'OFFLINE';
+      primaryLbl.textContent = `${label} · ${statusText}`;
+      if (primaryDot) {
+        primaryDot.className = 'dot ' + (activeStatus === 'live' ? 'live'
+          : activeStatus === 'connecting' ? 'degraded' : 'down');
+      }
+    }
   }
 }
 
