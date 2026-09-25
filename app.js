@@ -1532,7 +1532,7 @@ function initFilters() {
   });
 }
 
-// Crest radar icon — soft refresh (data + gentle tone)
+// Crest radar icon — soft refresh + same reset as Reset View
 function initCrestRefresh() {
   const crest = document.getElementById('crest-refresh');
   if (!crest) return;
@@ -1541,7 +1541,10 @@ function initCrestRefresh() {
     crest.classList.add('spinning');
     try { playRefreshTone(); } catch (err) { /* audio may be blocked until gesture unlock */ }
 
-    // Soft refresh: incidents + OOS + unit index (does not reset expanded card)
+    // Same as Reset View: county map, clear selection, feed scroll to top
+    if (state.map) resetMapView();
+
+    // Soft refresh: incidents + OOS
     Promise.all([
       refreshAll(),
       refreshOos()
