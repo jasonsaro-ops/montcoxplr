@@ -64,6 +64,8 @@ Once deployed, visiting these in a browser should return raw feed data:
 
 - `https://montcoxplr-proxy.your-subdomain.workers.dev/rss`
 - `https://montcoxplr-proxy.your-subdomain.workers.dev/oos`
+- `https://montcoxplr-proxy.your-subdomain.workers.dev/incidents` (WebCAD list HTML — eid/num index)
+- `https://montcoxplr-proxy.your-subdomain.workers.dev/units?eid=…&num=…` (units for one call)
 - `https://montcoxplr-proxy.your-subdomain.workers.dev/health` → `{"ok":true,...}`
 
 ## Changing the allowed origin

@@ -22,6 +22,13 @@
    comes from `incidenttype` (not the coarse `type` field which is only
    Fire|EMS|Traffic) and from the RSS title/description.
 
+   UNITS ASSIGNED TO AN INCIDENT come from livecad-incidents.asp (the
+   county's WebCAD Active Incidents page). The list HTML maps each
+   incident number → internal eid; expanding a call requests
+   ?units=1&eid=&num= and returns a small unit/status/time table.
+   Clicking an incident on this dashboard zooms the map and opens a
+   detail panel that lazy-loads those units.
+
    UNITS OUT OF SERVICE (separate panel) still comes from
    livecad-unitsoos.asp via the Cloudflare Worker / CORS proxies.
    ========================================================================= */
@@ -87,6 +94,26 @@ const CONFIG = {
       ]
     },
 
+    // WebCAD incident list (HTML) — provides eid↔incidentno mapping used
+    // to fetch assigned units for the detail panel.
+    incidents: {
+      url: 'https://webapp07.montcopa.org/eoc/cadinfo/livecad-incidents.asp',
+      corsProxies: [
+        (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+        (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`
+      ]
+    },
+
+    // Assigned units for one incident. Worker builds the query string;
+    // public CORS proxies append ?units=1&eid=&num= to the base URL.
+    units: {
+      url: 'https://webapp07.montcopa.org/eoc/cadinfo/livecad-incidents.asp',
+      corsProxies: [
+        (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+        (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`
+      ]
+    },
+
     oos: {
       url: 'https://webapp07.montcopa.org/eoc/cadinfo/livecad-unitsoos.asp',
       corsProxies: [
@@ -128,7 +155,11 @@ const state = {
   oosUnits: [],
   audioEnabled: false,
   knownIncidentIds: new Set(), // ids seen as of the last non-demo refresh
-  hasBaseline: false            // true once we've established a starting set to diff against
+  hasBaseline: false,          // true once we've established a starting set to diff against
+  // incident number (e.g. E2671198) → { eid, num } from WebCAD list HTML
+  incidentEidByNum: new Map(),
+  // incident number → { units: [...], fetchedAt, status: 'loading'|'ok'|'empty'|'error' }
+  unitsCache: new Map()
 };
 
 // ---------------------------------------------------------------------
@@ -140,6 +171,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initFilters();
   initResetView();
   initAudioToggle();
+  initDetailPanel();
   refreshAll();
   refreshOos();
   setInterval(refreshAll, CONFIG.refreshIntervalMs);
@@ -356,10 +388,12 @@ function renderMarkers() {
     marker.bindPopup(`
       <div class="popup-inner">
         <div class="p-type" style="color:${COLORS[inc.cat] || COLORS.other}">${escapeHtml(inc.type)}</div>
+        ${inc.incidentno ? `<div class="p-row">${escapeHtml(inc.incidentno)}</div>` : ''}
         <div class="p-row">${escapeHtml(inc.address)}</div>
         <div class="p-row">${escapeHtml(inc.municipality || '')}</div>
         <div class="p-row">Station: ${escapeHtml(inc.station || '—')}</div>
         <div class="p-row">Dispatched: ${escapeHtml(inc.dispatched || '—')}</div>
+        <div class="p-row" style="opacity:.7;margin-top:4px;">Click for assigned units</div>
       </div>
     `);
     marker.on('click', () => selectIncident(inc.id));
@@ -473,8 +507,13 @@ function normalizeArcgisFeature(feature, idx) {
     'dispatched_dt', 'updated_dt', 'GE_UPDATETIME', 'ge_updatetime'
   ]) || dispatched;
 
+  const incidentno = firstDefined(props, [
+    'incidentno', 'IncidentNo', 'incident_no', 'INCIDENTNO'
+  ]) || '';
+
   return {
-    id: `ag-${props.OBJECTID || props.objectid || props.FID || props.incidentno || idx}`,
+    id: `ag-${props.OBJECTID || props.objectid || props.FID || incidentno || idx}`,
+    incidentno: incidentno ? String(incidentno).trim() : '',
     type: String(displayType).toUpperCase().replace(/^NULL$/i, 'INCIDENT'),
     address,
     municipality,
@@ -586,9 +625,8 @@ function hashStr(s) {
   return (h >>> 0).toString(36);
 }
 
-// Builds the ordered list of URLs to try for a given feed ('rss' | 'oos'):
-// the Worker relay first (if configured), then each public CORS proxy
-// wrapping the direct county URL.
+// Builds the ordered list of URLs to try for a given feed ('rss' | 'oos' |
+// 'incidents'): Worker relay first (if configured), then public CORS proxies.
 function buildCandidateUrls(kind) {
   const urls = [];
   const workerBase = CONFIG.sources.worker.baseUrl;
@@ -597,6 +635,27 @@ function buildCandidateUrls(kind) {
   const src = CONFIG.sources[kind];
   if (src && Array.isArray(src.corsProxies)) {
     src.corsProxies.forEach((buildProxyUrl) => urls.push(buildProxyUrl(src.url)));
+  }
+  return urls;
+}
+
+// Units endpoint needs eid + num query params. Worker accepts them on /units;
+// public proxies wrap the full upstream URL including the query string.
+function buildUnitCandidateUrls(eid, num) {
+  const urls = [];
+  const workerBase = CONFIG.sources.worker.baseUrl;
+  if (workerBase) {
+    const base = workerBase.replace(/\/+$/, '');
+    urls.push(
+      `${base}/units?eid=${encodeURIComponent(eid)}&num=${encodeURIComponent(num)}`
+    );
+  }
+  const upstream =
+    `https://webapp07.montcopa.org/eoc/cadinfo/livecad-incidents.asp` +
+    `?units=1&eid=${encodeURIComponent(eid)}&num=${encodeURIComponent(num)}`;
+  const src = CONFIG.sources.units;
+  if (src && Array.isArray(src.corsProxies)) {
+    src.corsProxies.forEach((buildProxyUrl) => urls.push(buildProxyUrl(upstream)));
   }
   return urls;
 }
@@ -681,11 +740,240 @@ function renderOosList() {
 }
 
 // ---------------------------------------------------------------------
+// DATA FETCHING — WebCAD incident index (eid ↔ incident number)
+// ---------------------------------------------------------------------
+async function fetchIncidentIndex() {
+  for (const url of buildCandidateUrls('incidents')) {
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) continue;
+      const html = await res.text();
+      const map = parseIncidentIndexHtml(html);
+      if (map.size > 0) {
+        state.incidentEidByNum = map;
+        return map;
+      }
+    } catch (err) {
+      continue;
+    }
+  }
+  return state.incidentEidByNum;
+}
+
+// Parses data-eid / data-num attributes from the county's WebCAD list HTML.
+function parseIncidentIndexHtml(html) {
+  const map = new Map();
+  const re = /data-eid=['"](\d+)['"]\s+data-num=['"]([^'"]+)['"]/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const eid = m[1];
+    const num = String(m[2]).trim().toUpperCase();
+    if (eid && num) map.set(num, { eid, num });
+  }
+  // Also accept reversed attribute order
+  const re2 = /data-num=['"]([^'"]+)['"]\s+data-eid=['"](\d+)['"]/gi;
+  while ((m = re2.exec(html)) !== null) {
+    const num = String(m[1]).trim().toUpperCase();
+    const eid = m[2];
+    if (eid && num && !map.has(num)) map.set(num, { eid, num });
+  }
+  return map;
+}
+
+// ---------------------------------------------------------------------
+// DATA FETCHING — units assigned to one incident (lazy, on click)
+// ---------------------------------------------------------------------
+async function fetchUnitsForIncident(incidentno) {
+  const num = String(incidentno || '').trim().toUpperCase();
+  if (!num) return { status: 'error', units: [] };
+
+  const meta = state.incidentEidByNum.get(num);
+  if (!meta || !meta.eid) {
+    // Index may be stale — try refreshing once
+    await fetchIncidentIndex();
+  }
+  const resolved = state.incidentEidByNum.get(num);
+  if (!resolved || !resolved.eid) {
+    return { status: 'error', units: [], message: 'Incident not found in WebCAD unit index' };
+  }
+
+  for (const url of buildUnitCandidateUrls(resolved.eid, resolved.num)) {
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) continue;
+      const html = await res.text();
+      const units = parseUnitsHtml(html);
+      // County returns a short message when none assigned
+      if (/no units are currently assigned/i.test(html)) {
+        return { status: 'empty', units: [] };
+      }
+      if (/invalid incident/i.test(html)) {
+        continue;
+      }
+      if (units.length > 0) return { status: 'ok', units };
+      if (units.length === 0 && /u-table|u-msg/i.test(html)) {
+        return { status: 'empty', units: [] };
+      }
+    } catch (err) {
+      continue;
+    }
+  }
+  return { status: 'error', units: [], message: 'Could not load unit assignments' };
+}
+
+function parseUnitsHtml(html) {
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const rows = Array.from(doc.querySelectorAll('table.u-table tbody tr, table tbody tr'));
+    const units = [];
+    rows.forEach((row) => {
+      const cells = Array.from(row.querySelectorAll('td'));
+      if (cells.length < 2) return;
+      const unit = (cells[0].textContent || '').replace(/\s+/g, ' ').trim();
+      const statusEl = cells[1].querySelector('.u-badge, span') || cells[1];
+      const status = (statusEl.textContent || '').replace(/\s+/g, ' ').trim();
+      const time = cells[2]
+        ? (cells[2].textContent || '').replace(/\s+/g, ' ').trim()
+        : '';
+      if (unit) units.push({ unit, status, time });
+    });
+    return units;
+  } catch (err) {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------
+// DETAIL PANEL (units + incident summary)
+// ---------------------------------------------------------------------
+function openDetailPanel(inc) {
+  const panel = document.getElementById('detail-panel');
+  if (!panel || !inc) return;
+
+  panel.classList.add('open');
+  panel.dataset.incidentId = inc.id;
+
+  const catColor = COLORS[inc.cat] || COLORS.other;
+  document.getElementById('detail-type').textContent = inc.type || 'INCIDENT';
+  document.getElementById('detail-type').style.color = catColor;
+  document.getElementById('detail-num').textContent = inc.incidentno || '';
+  document.getElementById('detail-loc').textContent =
+    [inc.address, inc.municipality].filter(Boolean).join(' · ') || '—';
+  document.getElementById('detail-meta').textContent = [
+    inc.station ? `Station ${inc.station}` : null,
+    inc.dispatched ? `Dispatched ${inc.dispatched}` : null
+  ].filter(Boolean).join(' · ') || '';
+
+  const unitsEl = document.getElementById('detail-units');
+  unitsEl.innerHTML = `<div class="detail-units-loading">Loading assigned units…</div>`;
+
+  loadAndRenderUnits(inc);
+}
+
+function closeDetailPanel() {
+  const panel = document.getElementById('detail-panel');
+  if (panel) {
+    panel.classList.remove('open');
+    delete panel.dataset.incidentId;
+  }
+}
+
+async function loadAndRenderUnits(inc) {
+  const unitsEl = document.getElementById('detail-units');
+  if (!unitsEl || !inc) return;
+
+  const num = (inc.incidentno || '').trim().toUpperCase();
+  if (!num) {
+    unitsEl.innerHTML =
+      `<div class="detail-units-empty">No incident number — unit list unavailable for this source.</div>`;
+    return;
+  }
+
+  // Serve from short-lived cache if present
+  const cached = state.unitsCache.get(num);
+  if (cached && cached.status === 'ok' && (Date.now() - cached.fetchedAt) < 45000) {
+    renderUnitsList(unitsEl, cached.units);
+    return;
+  }
+
+  unitsEl.innerHTML = `<div class="detail-units-loading">Loading assigned units…</div>`;
+  state.unitsCache.set(num, { status: 'loading', units: [], fetchedAt: Date.now() });
+
+  const result = await fetchUnitsForIncident(num);
+  // Ignore if user already selected a different incident
+  const panel = document.getElementById('detail-panel');
+  if (panel && panel.dataset.incidentId !== inc.id) return;
+
+  state.unitsCache.set(num, {
+    status: result.status,
+    units: result.units || [],
+    fetchedAt: Date.now()
+  });
+
+  if (result.status === 'ok') {
+    renderUnitsList(unitsEl, result.units);
+  } else if (result.status === 'empty') {
+    unitsEl.innerHTML =
+      `<div class="detail-units-empty">No units currently assigned to this incident.</div>`;
+  } else {
+    unitsEl.innerHTML =
+      `<div class="detail-units-empty">${escapeHtml(result.message || 'Unit information unavailable.')}</div>`;
+  }
+}
+
+function renderUnitsList(container, units) {
+  if (!units || units.length === 0) {
+    container.innerHTML =
+      `<div class="detail-units-empty">No units currently assigned to this incident.</div>`;
+    return;
+  }
+  container.innerHTML = `
+    <table class="detail-units-table">
+      <thead><tr><th>Unit</th><th>Status</th><th>Time</th></tr></thead>
+      <tbody>
+        ${units.map((u) => `
+          <tr>
+            <td class="du-unit">${escapeHtml(u.unit)}</td>
+            <td><span class="du-status ${statusClass(u.status)}">${escapeHtml(u.status || '—')}</span></td>
+            <td class="du-time">${escapeHtml(u.time || '')}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function statusClass(status) {
+  const s = String(status || '').toLowerCase();
+  if (/arriv|on\s*scene|onscene/.test(s)) return 's-arrived';
+  if (/enroute|en\s*route|respond/.test(s)) return 's-enroute';
+  if (/dispatch|assigned|queued/.test(s)) return 's-dispatched';
+  if (/clear|available|transport/.test(s)) return 's-clear';
+  return 's-other';
+}
+
+function initDetailPanel() {
+  const closeBtn = document.getElementById('detail-close');
+  if (closeBtn) closeBtn.addEventListener('click', closeDetailPanel);
+  // Close when clicking the dimmed backdrop (panel itself stops propagation)
+  const panel = document.getElementById('detail-panel');
+  if (panel) {
+    panel.addEventListener('click', (e) => e.stopPropagation());
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeDetailPanel();
+  });
+}
+
+// ---------------------------------------------------------------------
 // REFRESH ORCHESTRATION
 // ---------------------------------------------------------------------
 async function refreshAll() {
   setSourceStatus('arcgis', 'connecting');
   setRefreshCountdown();
+
+  // Refresh eid↔incidentno index in parallel (used by the units panel).
+  fetchIncidentIndex().catch(() => {});
 
   let combined = [];
   let activeSource = null;
@@ -792,6 +1080,7 @@ function renderFeedList() {
       <div class="loc">${escapeHtml(i.address)}${i.municipality ? ' · ' + escapeHtml(i.municipality) : ''}</div>
       ${i.description ? `<div class="desc">${escapeHtml(i.description)}</div>` : ''}
       <div class="meta">
+        ${i.incidentno ? `<span>${escapeHtml(i.incidentno)}</span>` : ''}
         ${i.station ? `<span>STA ${escapeHtml(i.station)}</span>` : ''}
         ${i.dispatched ? `<span>${escapeHtml(i.dispatched)}</span>` : ''}
         <span class="${i.lat != null ? 'geo-yes' : 'geo-no'}">${i.lat != null ? 'MAPPED' : 'NO GEO'}</span>
@@ -823,6 +1112,9 @@ function selectIncident(id) {
       setTimeout(() => marker.openPopup(), 350);
     }
   }
+
+  // Floating detail panel with assigned units (lazy-loaded from WebCAD).
+  openDetailPanel(inc);
 }
 
 function renderTicker() {
