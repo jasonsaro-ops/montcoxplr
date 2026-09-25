@@ -1309,8 +1309,14 @@ async function refreshAll() {
 
   state.activeIncidentSource = activeSource;
 
-  // newest first
-  combined.sort((a, b) => (b._sortKey || 0) - (a._sortKey || 0));
+  // Feed order: Fire → EMS → Traffic first, then overlays / other.
+  // Within each category, newest first.
+  combined.sort((a, b) => {
+    const pa = categoryPriority(a.cat);
+    const pb = categoryPriority(b.cat);
+    if (pa !== pb) return pa - pb;
+    return (b._sortKey || 0) - (a._sortKey || 0);
+  });
 
   // Only diff against real (non-demo) data — otherwise an outage followed
   // by recovery would make every currently-active incident look "new"
@@ -1633,6 +1639,20 @@ function toSortKey(value) {
   if (typeof value === 'number') return value;
   const d = new Date(value);
   return isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+// Lower number = higher in the live feed column.
+function categoryPriority(cat) {
+  switch (cat) {
+    case 'fire': return 1;
+    case 'ems': return 2;
+    case 'traffic': return 3;
+    case 'road511': return 4;
+    case 'outage': return 5;
+    case 'winter': return 6;
+    case 'planned': return 7;
+    default: return 8;
+  }
 }
 
 function relativeTime(ms) {
