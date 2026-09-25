@@ -762,11 +762,148 @@
   .audio-toggle svg{ width:11px; height:11px; flex-shrink:0; }
 
   /* ============ RESPONSIVE ============ */
+
+  /* Large tablet / small desktop: keep 3 columns but shrink rails */
+  @media (max-width: 1280px){
+    main.grid{ grid-template-columns: 200px 1fr 320px; }
+    .hdr{ gap:12px; padding: 8px 12px; }
+    .hdr-title h1{ font-size: 18px; }
+    .hdr-title .eyebrow{ font-size: 9px; letter-spacing: 2px; }
+    .status-chip{ padding: 4px 8px; font-size: 9.5px; }
+    #clock-local{ font-size: 15px; }
+  }
+
+  /* Tablet: map + feed; stats become a compact top strip */
   @media (max-width: 980px){
-    main.grid{ grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
-    .rail{ display:none; }
-    .feed-rail{ height: 220px; border-left:0; border-top:1px solid var(--line); }
-    .map-wrap{ min-height: 260px; }
+    header.hdr{
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      padding: 8px 10px;
+    }
+    .hdr-spacer{ display:none; }
+    .status-rail{
+      order: 3;
+      width: 100%;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .clock-block{
+      margin-left: auto;
+      border-left: 0;
+      padding-left: 0;
+    }
+    .hdr-title h1{ font-size: 16px; }
+    .hdr-title h1 span{ display:none; }
+    .hdr-title .eyebrow{ display:none; }
+
+    main.grid{
+      grid-template-columns: 1fr;
+      grid-template-rows: auto minmax(240px, 1fr) minmax(200px, 38vh);
+    }
+    .rail{
+      display: flex;
+      flex-direction: row;
+      flex-wrap: wrap;
+      align-items: stretch;
+      gap: 6px;
+      padding: 6px 8px;
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+      overflow-x: auto;
+      overflow-y: hidden;
+      max-height: none;
+    }
+    .rail > div:first-child{
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .rail .panel-label{ display:none; }
+    .rail .stat-grid{
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 5px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+    .rail .stat-grid .stat-card[data-cat="all"]{ grid-column: auto; }
+    .rail .stat-card{
+      flex: 0 0 auto;
+      min-width: 64px;
+      padding: 4px 8px;
+    }
+    .rail .stat-card .n{ font-size: 16px; }
+    .rail .stat-card .label{ font-size: 8px; }
+    /* Hide map key + alert note on tablet; OOS becomes a horizontal strip item */
+    .rail > div:nth-child(2){ display:none; }
+    .oos-block{
+      flex: 0 0 auto;
+      min-width: 180px;
+      max-width: 280px;
+      max-height: 72px;
+      padding: 4px 6px;
+    }
+    .oos-block h3{ margin-bottom: 2px; font-size: 8px; }
+    .oos-list{
+      max-height: 48px;
+      overflow-y: auto;
+    }
+    .oos-item{ padding: 2px 5px; }
+    .oos-item .oos-unit{ font-size: 9px; }
+    .oos-item .oos-detail{ display:none; }
+
+    .map-wrap{ min-height: 240px; }
+    .feed-rail{
+      height: auto;
+      border-left: 0;
+      border-top: 1px solid var(--line);
+      min-height: 0;
+    }
+    .feed-head{ padding: 8px 10px 6px; }
+    .feed-filters{ gap: 4px; }
+    .filter-btn{ padding: 3px 6px; font-size: 9px; }
+  }
+
+  /* Phone */
+  @media (max-width: 640px){
+    header.hdr{ padding: 6px 8px; gap: 6px; }
+    .crest{ width: 32px; height: 32px; }
+    .crest svg{ width: 16px; height: 16px; }
+    .hdr-title h1{ font-size: 14px; }
+    .status-rail{ gap: 4px; }
+    .status-chip{
+      padding: 3px 6px;
+      font-size: 8.5px;
+    }
+    .status-chip span:last-child{
+      max-width: 9ch;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .clock-block #clock-date{ display:none; }
+    #clock-local{ font-size: 13px; }
+
+    main.grid{
+      grid-template-rows: auto minmax(200px, 1fr) minmax(180px, 42vh);
+    }
+    .rail{
+      padding: 5px 6px;
+    }
+    .rail .stat-card{ min-width: 56px; padding: 3px 6px; }
+    .rail .stat-card .n{ font-size: 14px; }
+    .oos-block{ display:none; }
+
+    .map-badge{ font-size: 9px; padding: 3px 6px; }
+    .map-reset-btn{ font-size: 9px; padding: 5px 8px; }
+
+    .feed-head{ padding: 6px 8px; }
+    .incident-card{ padding: 7px 8px; }
+    .ticker{ font-size: 11px; }
+  }
+
+  /* Very narrow */
+  @media (max-width: 400px){
+    .status-rail .audio-toggle span:last-child{ display:none; }
+    .hdr-title h1{ font-size: 13px; }
   }
 </style>
 </head>
