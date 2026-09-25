@@ -222,9 +222,22 @@ function initResetView() {
 
 function resetMapView() {
   state.selectedId = null;
-  document.querySelectorAll('.incident-card').forEach((c) => c.classList.remove('selected'));
+  state.expandedId = null;
+  document.querySelectorAll('.incident-card').forEach((c) => {
+    c.classList.remove('selected', 'expanded');
+  });
+  document.querySelectorAll('.incident-card .card-units').forEach((el) => {
+    el.hidden = true;
+  });
+  document.querySelectorAll('.incident-card .expand-hint').forEach((el) => {
+    el.textContent = '▼ Units / zoom';
+  });
   state.map.closePopup();
   state.map.flyTo(CONFIG.map.center, CONFIG.map.zoom, { animate: true, duration: 0.8 });
+
+  // Scroll the live feed column back to the top (most-recent / pinned calls)
+  const list = document.getElementById('feed-list');
+  if (list) list.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 // ---------------------------------------------------------------------
