@@ -203,28 +203,35 @@
   .rail{
     background: var(--panel);
     border-right: 1px solid var(--line);
-    padding: 14px 12px;
+    padding: 8px 8px 10px;
     overflow-y:auto;
     display:flex;
     flex-direction:column;
-    gap: 14px;
+    gap: 8px;
   }
 
   .panel-label{
     font-family: var(--font-mono);
-    font-size: 10px;
-    letter-spacing: 2.5px;
+    font-size: 9px;
+    letter-spacing: 1.5px;
     color: var(--text-dim);
     text-transform: uppercase;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
   }
+
+  .stat-grid{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+  }
+  .stat-grid .stat-card[data-cat="all"]{ grid-column: 1 / -1; }
 
   .stat-card{
     background: var(--panel-raise);
     border: 1px solid var(--line);
     border-left: 3px solid var(--line);
-    border-radius: 4px;
-    padding: 10px 12px;
+    border-radius: 3px;
+    padding: 5px 7px;
     cursor:pointer;
     transition: border-color 0.15s ease, background 0.15s ease;
   }
@@ -242,56 +249,64 @@
 
   .stat-card .n{
     font-family: var(--font-display);
-    font-size: 30px;
+    font-size: 18px;
     font-weight:700;
     line-height:1;
     color: var(--text-hi);
   }
   .stat-card .label{
     font-family: var(--font-mono);
-    font-size: 10px;
-    letter-spacing: 1.5px;
+    font-size: 8.5px;
+    letter-spacing: 0.5px;
     color: var(--text-mid);
     text-transform: uppercase;
-    margin-top:3px;
+    margin-top:1px;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
   }
 
   .legend{
-    display:flex; flex-direction:column; gap:6px;
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px 6px;
     font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 9.5px;
     color: var(--text-mid);
   }
-  .legend-row{ display:flex; align-items:center; gap:8px; }
-  .swatch{ width:10px; height:10px; border-radius:50%; flex-shrink:0; }
-  .swatch.fire{ background: var(--fire); box-shadow:0 0 6px var(--fire); }
-  .swatch.ems{ background: var(--ems); box-shadow:0 0 6px var(--ems); }
-  .swatch.traffic{ background: var(--traffic); box-shadow:0 0 6px var(--traffic); }
-  .swatch.outage{ background: #ff6b00; box-shadow:0 0 6px #ff6b00; }
-  .swatch.road511{ background: #c44dff; box-shadow:0 0 6px #c44dff; }
-  .swatch.winter{ background: #7ec8ff; box-shadow:0 0 6px #7ec8ff; }
-  .swatch.planned{ background: #ff4d9a; box-shadow:0 0 6px #ff4d9a; }
-  .swatch.other{ background: var(--other); box-shadow:0 0 6px var(--other); }
+  .legend-row{ display:flex; align-items:center; gap:5px; min-width:0; }
+  .legend-row span:last-child{
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .swatch{ width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+  .swatch.fire{ background: var(--fire); box-shadow:0 0 4px var(--fire); }
+  .swatch.ems{ background: var(--ems); box-shadow:0 0 4px var(--ems); }
+  .swatch.traffic{ background: var(--traffic); box-shadow:0 0 4px var(--traffic); }
+  .swatch.outage{ background: #ff6b00; box-shadow:0 0 4px #ff6b00; }
+  .swatch.road511{ background: #c44dff; box-shadow:0 0 4px #c44dff; }
+  .swatch.winter{ background: #7ec8ff; box-shadow:0 0 4px #7ec8ff; }
+  .swatch.planned{ background: #ff4d9a; box-shadow:0 0 4px #ff4d9a; }
+  .swatch.other{ background: var(--other); box-shadow:0 0 4px var(--other); }
 
   .aux-block{
     background: var(--panel-raise);
     border: 1px solid var(--line);
-    border-radius: 4px;
-    padding: 10px 12px;
+    border-radius: 3px;
+    padding: 7px 8px;
   }
   .aux-block h3{
     font-family: var(--font-mono);
-    font-size: 10px;
-    letter-spacing:1.5px;
+    font-size: 9px;
+    letter-spacing:1px;
     color: var(--text-mid);
     text-transform:uppercase;
-    margin-bottom:8px;
+    margin-bottom:4px;
   }
   .aux-block p{
-    font-size: 11.5px;
+    font-size: 10.5px;
     color: var(--text-mid);
-    line-height:1.5;
-    margin-bottom: 8px;
+    line-height:1.35;
+    margin-bottom: 4px;
   }
   .aux-btn{
     display:inline-block;
@@ -301,21 +316,34 @@
     border: 1px solid var(--line);
     color: var(--text-hi);
     font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 9.5px;
     letter-spacing: 1px;
     text-transform: uppercase;
     text-decoration:none;
-    padding: 8px 6px;
+    padding: 5px 6px;
     border-radius: 3px;
     cursor:pointer;
     transition: all 0.15s ease;
   }
   .aux-btn:hover{ border-color: var(--amber); color: var(--amber); }
 
+  .oos-block{
+    flex: 1 1 auto;
+    min-height: 80px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .sources-block{
+    flex: 0 0 auto;
+  }
+  .sources-block a{ font-size: 10.5px; }
   .oos-list{
-    display:flex; flex-direction:column; gap:6px;
+    display:flex; flex-direction:column; gap:4px;
     overflow-y:auto;
-    max-height: 260px;
+    max-height: none;
+    flex: 1 1 auto;
+    min-height: 0;
     margin-top: 2px;
   }
   .oos-item{
@@ -323,28 +351,28 @@
     border: 1px solid var(--line-soft);
     border-left: 3px solid var(--text-dim);
     border-radius: 3px;
-    padding: 6px 8px;
+    padding: 4px 6px;
   }
   .oos-item .oos-unit{
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: 10px;
     font-weight:600;
     color: var(--text-hi);
     letter-spacing: 0.5px;
   }
   .oos-item .oos-detail{
-    font-size: 10.5px;
+    font-size: 9.5px;
     color: var(--text-mid);
-    margin-top:2px;
-    line-height:1.4;
+    margin-top:1px;
+    line-height:1.3;
   }
   .oos-empty{
     text-align:center;
     color: var(--text-dim);
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 9px;
     letter-spacing: 1px;
-    padding: 16px 6px;
+    padding: 8px 6px;
   }
 
   /* ============ MAP ============ */
@@ -779,11 +807,11 @@
 
   <main class="grid">
 
-    <!-- LEFT RAIL: stats + legend + radio -->
+    <!-- LEFT RAIL: stats + legend + OOS -->
     <aside class="rail">
       <div>
         <div class="panel-label">Active Incidents</div>
-        <div style="display:flex; flex-direction:column; gap:8px;">
+        <div class="stat-grid">
           <div class="stat-card active" data-cat="all">
             <div class="n" id="stat-all">0</div>
             <div class="label">All Active</div>
@@ -802,19 +830,19 @@
           </div>
           <div class="stat-card" data-cat="outage">
             <div class="n" id="stat-outage">0</div>
-            <div class="label">Power outage</div>
+            <div class="label">Outage</div>
           </div>
           <div class="stat-card" data-cat="road511">
             <div class="n" id="stat-road511">0</div>
-            <div class="label">511 road</div>
+            <div class="label">511 Road</div>
           </div>
           <div class="stat-card" data-cat="winter">
             <div class="n" id="stat-winter">0</div>
-            <div class="label">Winter road</div>
+            <div class="label">Winter</div>
           </div>
           <div class="stat-card" data-cat="planned">
             <div class="n" id="stat-planned">0</div>
-            <div class="label">Planned event</div>
+            <div class="label">Planned</div>
           </div>
         </div>
       </div>
@@ -822,21 +850,21 @@
       <div>
         <div class="panel-label">Map Key</div>
         <div class="legend">
-          <div class="legend-row"><span class="swatch fire"></span> Fire dispatch</div>
-          <div class="legend-row"><span class="swatch ems"></span> EMS dispatch</div>
-          <div class="legend-row"><span class="swatch traffic"></span> Traffic / MVA</div>
-          <div class="legend-row"><span class="swatch outage"></span> Power outage</div>
-          <div class="legend-row"><span class="swatch road511"></span> 511 road condition</div>
-          <div class="legend-row"><span class="swatch winter"></span> Winter road condition</div>
-          <div class="legend-row"><span class="swatch planned"></span> 511 planned event</div>
-          <div class="legend-row"><span class="swatch other"></span> Other / unclassified</div>
+          <div class="legend-row"><span class="swatch fire"></span><span>Fire</span></div>
+          <div class="legend-row"><span class="swatch ems"></span><span>EMS</span></div>
+          <div class="legend-row"><span class="swatch traffic"></span><span>Traffic</span></div>
+          <div class="legend-row"><span class="swatch outage"></span><span>Outage</span></div>
+          <div class="legend-row"><span class="swatch road511"></span><span>511 Road</span></div>
+          <div class="legend-row"><span class="swatch winter"></span><span>Winter</span></div>
+          <div class="legend-row"><span class="swatch planned"></span><span>Planned</span></div>
+          <div class="legend-row"><span class="swatch other"></span><span>Other</span></div>
         </div>
-        <p style="font-size:10.5px; color:var(--text-dim); margin-top:8px; line-height:1.4;">
-          🔔 Enable <b style="color:var(--text-mid);">Alert Tones</b> in the header for a distinct chime whenever a new incident is dispatched.
+        <p style="font-size:9.5px; color:var(--text-dim); margin-top:4px; line-height:1.3;">
+          🔔 <b style="color:var(--text-mid);">Alert Tones</b> in the header for new-dispatch chimes.
         </p>
       </div>
 
-      <div class="aux-block" style="flex:1; display:flex; flex-direction:column; min-height:0;">
+      <div class="aux-block oos-block">
         <h3 style="display:flex; align-items:center; justify-content:space-between;">
           <span>Units Out of Service</span>
           <span class="dot" id="dot-oos" style="width:6px;height:6px;"></span>
@@ -846,21 +874,12 @@
         </div>
       </div>
 
-      <div class="aux-block">
+      <div class="aux-block sources-block">
         <h3>Sources</h3>
-        <p style="margin-bottom:4px;">
-          <a href="https://www.montgomerycountypa.gov/departments/department-public-safety/webcad-active-incidents/active-incidents-map-view" target="_blank" rel="noopener">Active Incidents Map View</a>
-        </p>
-        <p style="margin-bottom:4px;">
-          <a href="https://gis.montcopa.org/opendata/incidents-map.html" target="_blank" rel="noopener">Montco Live Incident Map</a>
-        </p>
-        <p style="margin-bottom:4px;">
-          <a href="https://webapp07.montcopa.org/eoc/cadinfo/livecadrss.asp" target="_blank" rel="noopener">WebCAD Incident RSS</a>
-          <span style="color:var(--text-dim); font-size:10px;"> (failover)</span>
-        </p>
-        <p style="margin-bottom:0;">
-          <a href="https://www.montgomerycountypa.gov/departments/department-public-safety/webcad-active-incidents/webcad-units-out-service-oos" target="_blank" rel="noopener">WebCAD Units OOS</a>
-        </p>
+        <p style="margin-bottom:2px;"><a href="https://www.montgomerycountypa.gov/departments/department-public-safety/webcad-active-incidents/active-incidents-map-view" target="_blank" rel="noopener">Active Incidents Map</a></p>
+        <p style="margin-bottom:2px;"><a href="https://gis.montcopa.org/opendata/incidents-map.html" target="_blank" rel="noopener">Montco Live Map</a></p>
+        <p style="margin-bottom:2px;"><a href="https://webapp07.montcopa.org/eoc/cadinfo/livecadrss.asp" target="_blank" rel="noopener">WebCAD RSS</a> <span style="color:var(--text-dim); font-size:9px;">(failover)</span></p>
+        <p style="margin-bottom:0;"><a href="https://www.montgomerycountypa.gov/departments/department-public-safety/webcad-active-incidents/webcad-units-out-service-oos" target="_blank" rel="noopener">Units OOS</a></p>
       </div>
     </aside>
 
