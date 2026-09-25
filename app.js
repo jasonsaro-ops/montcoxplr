@@ -3,23 +3,24 @@
    -------------------------------------------------------------------------
    Data reality check (read this before deploying):
 
-   INCIDENTS prefer Montgomery County's ArcGIS hosted feature layer — the
-   same data powering the county's ArcGIS Experience app at
-   https://experience.arcgis.com/experience/028de5f59b014757bda5cc2444d1f0c9
-   That layer is the ONLY source with coordinates, so map markers only
-   appear when ArcGIS is live and fresh.
+   INCIDENTS prefer the county's live CAD FeatureServer that powers the
+   official Active Incidents Map View:
+     https://www.montgomerycountypa.gov/departments/department-public-safety/webcad-active-incidents/active-incidents-map-view
+     → embeds https://gis.montcopa.org/opendata/incidents-map.html
+     → queries Hosted/Montgomery_County_Active_CAD_Incidents_View
 
-   ⚠ STALENESS + RSS FAILOVER: ArcGIS (and the Hub snapshot URLs) can
-   silently freeze on yesterday's data while the county's public CAD is
-   still updating. After a successful ArcGIS response we check the newest
-   incident's dispatch time; if it is older than CONFIG.staleMaxAgeMs we
-   treat the feed as stale and fall through to the live WebCAD RSS feed
-   (livecadrss.asp). RSS has no coordinates — list/stats/ticker still
-   work; map markers simply stay empty and cards show "NO GEO".
+   That layer is the primary source with coordinates. Older services1 /
+   Hub snapshot URLs are kept only as fallbacks.
+
+   ⚠ STALENESS + RSS FAILOVER: If every geometry source is down or the
+   newest incident is older than CONFIG.staleMaxAgeMs, we fall through to
+   the live WebCAD RSS feed (livecadrss.asp). RSS has no coordinates —
+   list/stats/ticker still work; map markers stay empty and cards show
+   "NO GEO".
 
    Nature of call (FIRE ALARM, CARDIAC EMERGENCY, VEHICLE ACCIDENT, …)
-   comes from ArcGIS `incidenttype` (not the coarse `type` field which
-   is only Fire|EMS|Traffic) and from the RSS title/description.
+   comes from `incidenttype` (not the coarse `type` field which is only
+   Fire|EMS|Traffic) and from the RSS title/description.
 
    UNITS OUT OF SERVICE (separate panel) still comes from
    livecad-unitsoos.asp via the Cloudflare Worker / CORS proxies.
@@ -62,12 +63,13 @@ const CONFIG = {
     },
 
     // Tried in order; first one that returns usable *fresh* geometry wins.
-    // #1 is the confirmed FeatureServer query. Its coarse "type" field is
-    // 'Fire' | 'EMS' | 'Traffic'; the actual call nature lives in
-    // "incidenttype" (FIRE ALARM, CARDIAC EMERGENCY, …).
-    // #2–#4 are Esri Hub snapshot/export URLs — last-resort only; they
-    // can lag the live map by hours or days if the export job stalls.
+    // #1 — NEW live FeatureServer behind the county's Active Incidents
+    //      Map View (gis.montcopa.org). Same schema: type = Fire|EMS|Traffic,
+    //      incidenttype = actual nature, location/mun/station/dispatched.
+    // #2 — Legacy services1 FeatureServer (often frozen / retired).
+    // #3–#5 — Esri Hub snapshot exports — last-resort only.
     arcgisCandidates: [
+      'https://gis.montcopa.org/arcgis/rest/services/Hosted/Montgomery_County_Active_CAD_Incidents_View/FeatureServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson',
       'https://services1.arcgis.com/kOChldNuKsox8qZD/arcgis/rest/services/Montgomery_County_911_Incidents/FeatureServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson',
       'https://hub.arcgis.com/api/v3/datasets/b438c9b5aa684ccc87c6f0058d3ff6f6_0/downloads/data?format=geojson&spatialRefId=4326',
       'https://opendata.arcgis.com/api/v3/datasets/b438c9b5aa684ccc87c6f0058d3ff6f6_0/downloads/data?format=geojson&spatialRefId=4326',
@@ -465,8 +467,11 @@ function normalizeArcgisFeature(feature, idx) {
     'incidentsubtype', 'IncidentSubtype'
   ]) || '';
 
-  // Prefer GE_UPDATETIME (epoch ms) for sorting when present.
-  const sortRaw = firstDefined(props, ['GE_UPDATETIME', 'ge_updatetime']) || dispatched;
+  // Prefer epoch-ms fields for sorting when present (new layer uses
+  // dispatched_dt / updated_dt; legacy used GE_UPDATETIME).
+  const sortRaw = firstDefined(props, [
+    'dispatched_dt', 'updated_dt', 'GE_UPDATETIME', 'ge_updatetime'
+  ]) || dispatched;
 
   return {
     id: `ag-${props.OBJECTID || props.objectid || props.FID || props.incidentno || idx}`,
