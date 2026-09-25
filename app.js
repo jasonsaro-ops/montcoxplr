@@ -146,7 +146,8 @@ const COLORS = {
 const state = {
   incidents: [],       // normalized incident objects currently displayed
   markers: new Map(),  // id -> Leaflet marker
-  activeFilter: 'all',
+  activeFilter: 'all',       // category: all | fire | ems | traffic
+  unitStatusFilter: 'all',   // unit status: all | enroute | arrived | dispatched | other
   selectedId: null,
   sourceStatus: { arcgis: 'connecting', rss: 'connecting', oos: 'connecting' },
   activeIncidentSource: null, // 'arcgis' | 'rss' | 'demo' | null
@@ -173,6 +174,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initFilters();
   initResetView();
   initAudioToggle();
+  initCrestRefresh();
   refreshAll();
   refreshOos();
   setInterval(refreshAll, CONFIG.refreshIntervalMs);
@@ -251,6 +253,14 @@ function playTrafficTone() {
   const now = ctx.currentTime;
   scheduleTone(440, now, 0.1, 'triangle', 0.2);
   scheduleTone(440, now + 0.17, 0.1, 'triangle', 0.2);
+}
+
+// Soft refresh ping — short rising blip (used by the crest radar click)
+function playRefreshTone() {
+  const ctx = getAudioCtx();
+  const now = ctx.currentTime;
+  scheduleTone(660, now, 0.08, 'sine', 0.12);
+  scheduleTone(990, now + 0.09, 0.12, 'sine', 0.1);
 }
 
 const CATEGORY_TONES = { fire: playFireTone, ems: playEmsTone, traffic: playTrafficTone };
@@ -895,11 +905,19 @@ function renderUnitsList(container, units) {
       `<div class="card-units-empty">No units currently assigned to this incident.</div>`;
     return;
   }
+
+  const filtered = filterUnitsByStatus(units, state.unitStatusFilter);
+  if (filtered.length === 0) {
+    container.innerHTML =
+      `<div class="card-units-empty">No units match the “${escapeHtml(state.unitStatusFilter)}” status filter.</div>`;
+    return;
+  }
+
   container.innerHTML = `
     <table class="card-units-table">
       <thead><tr><th>Unit</th><th>Status</th><th>Time</th></tr></thead>
       <tbody>
-        ${units.map((u) => `
+        ${filtered.map((u) => `
           <tr>
             <td class="du-unit">${escapeHtml(u.unit)}</td>
             <td><span class="du-status ${statusClass(u.status)}">${escapeHtml(u.status || '—')}</span></td>
@@ -911,13 +929,43 @@ function renderUnitsList(container, units) {
   `;
 }
 
-function statusClass(status) {
+// Normalize a unit status string into a filter key.
+function unitStatusKey(status) {
   const s = String(status || '').toLowerCase();
-  if (/arriv|on\s*scene|onscene/.test(s)) return 's-arrived';
-  if (/enroute|en\s*route|respond/.test(s)) return 's-enroute';
-  if (/dispatch|assigned|queued/.test(s)) return 's-dispatched';
-  if (/clear|available|transport/.test(s)) return 's-clear';
+  if (/arriv|on\s*scene|onscene/.test(s)) return 'arrived';
+  if (/enroute|en\s*route|respond/.test(s)) return 'enroute';
+  if (/dispatch|assigned|queued/.test(s)) return 'dispatched';
+  if (/clear|available|transport|returning/.test(s)) return 'clear';
+  return 'other';
+}
+
+function statusClass(status) {
+  const key = unitStatusKey(status);
+  if (key === 'arrived') return 's-arrived';
+  if (key === 'enroute') return 's-enroute';
+  if (key === 'dispatched') return 's-dispatched';
+  if (key === 'clear') return 's-clear';
   return 's-other';
+}
+
+function filterUnitsByStatus(units, filter) {
+  if (!filter || filter === 'all') return units || [];
+  return (units || []).filter((u) => unitStatusKey(u.status) === filter);
+}
+
+// True if cached unit data for this incident includes at least one unit
+// matching the active unit-status filter (or filter is "all").
+function incidentMatchesUnitFilter(inc) {
+  if (!state.unitStatusFilter || state.unitStatusFilter === 'all') return true;
+  const num = (inc.incidentno || '').trim().toUpperCase();
+  if (!num) return false;
+  const cached = state.unitsCache.get(num);
+  if (!cached || cached.status === 'loading' || cached.status === 'error') {
+    // Unknown — still show so the user can expand and load units
+    return true;
+  }
+  if (cached.status === 'empty') return false;
+  return filterUnitsByStatus(cached.units, state.unitStatusFilter).length > 0;
 }
 
 // ---------------------------------------------------------------------
@@ -1017,12 +1065,15 @@ function renderStats() {
 
 function renderFeedList() {
   const list = document.getElementById('feed-list');
-  const filtered = state.incidents.filter(
-    (i) => state.activeFilter === 'all' || i.cat === state.activeFilter
-  );
+  const filtered = state.incidents.filter((i) => {
+    if (state.activeFilter !== 'all' && i.cat !== state.activeFilter) return false;
+    return incidentMatchesUnitFilter(i);
+  });
 
   if (filtered.length === 0) {
-    list.innerHTML = `<div class="feed-empty">NO ${state.activeFilter === 'all' ? '' : state.activeFilter.toUpperCase() + ' '}INCIDENTS ACTIVE</div>`;
+    const catBit = state.activeFilter === 'all' ? '' : state.activeFilter.toUpperCase() + ' ';
+    const unitBit = state.unitStatusFilter === 'all' ? '' : ` WITH UNIT STATUS “${state.unitStatusFilter.toUpperCase()}”`;
+    list.innerHTML = `<div class="feed-empty">NO ${catBit}INCIDENTS${unitBit} ACTIVE</div>`;
     return;
   }
 
@@ -1121,12 +1172,25 @@ function renderTicker() {
 // FILTERS
 // ---------------------------------------------------------------------
 function initFilters() {
-  document.querySelectorAll('.filter-btn').forEach((btn) => {
+  document.querySelectorAll('.filter-btn[data-filter]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.filter-btn').forEach((b) => b.classList.remove('active'));
+      document.querySelectorAll('.filter-btn[data-filter]').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       state.activeFilter = btn.dataset.filter;
+      // Keep stat cards in sync
+      document.querySelectorAll('.stat-card').forEach((c) => {
+        c.classList.toggle('active', c.dataset.cat === state.activeFilter);
+      });
       renderMarkers();
+      renderFeedList();
+    });
+  });
+
+  document.querySelectorAll('.filter-btn[data-unit-status]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-btn[data-unit-status]').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.unitStatusFilter = btn.dataset.unitStatus;
       renderFeedList();
     });
   });
@@ -1138,6 +1202,25 @@ function initFilters() {
       card.classList.add('active');
       const matchingFilterBtn = document.querySelector(`.filter-btn[data-filter="${cat}"]`);
       if (matchingFilterBtn) matchingFilterBtn.click();
+    });
+  });
+}
+
+// Crest radar icon — soft refresh (data + gentle tone)
+function initCrestRefresh() {
+  const crest = document.getElementById('crest-refresh');
+  if (!crest) return;
+
+  crest.addEventListener('click', () => {
+    crest.classList.add('spinning');
+    try { playRefreshTone(); } catch (err) { /* audio may be blocked until gesture unlock */ }
+
+    // Soft refresh: incidents + OOS + unit index (does not reset expanded card)
+    Promise.all([
+      refreshAll(),
+      refreshOos()
+    ]).finally(() => {
+      setTimeout(() => crest.classList.remove('spinning'), 600);
     });
   });
 }

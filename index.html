@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>MONTCOXPLR · Live Incident Monitor</title>
 <meta name="description" content="MONTCOXPLR — real-time Fire, EMS and Traffic incident monitor for Montgomery County, PA, sourced from the county's public CAD feeds." />
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23060a10'/%3E%3Ccircle cx='32' cy='32' r='22' fill='none' stroke='%23ffb020' stroke-width='2' opacity='0.9'/%3E%3Ccircle cx='32' cy='32' r='14' fill='none' stroke='%23ffb020' stroke-width='1.5' opacity='0.55'/%3E%3Ccircle cx='32' cy='32' r='6' fill='none' stroke='%23ffb020' stroke-width='1.2' opacity='0.4'/%3E%3Cpath d='M32 32 L50 18' stroke='%23ffb020' stroke-width='2.5' stroke-linecap='round'/%3E%3Ccircle cx='32' cy='32' r='2.5' fill='%23ffb020'/%3E%3C/svg%3E" />
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23060a10'/%3E%3Ccircle cx='32' cy='32' r='22' fill='none' stroke='%23ffb020' stroke-width='2' opacity='0.9'/%3E%3Ccircle cx='32' cy='32' r='14' fill='none' stroke='%23ffb020' stroke-width='1.5' opacity='0.55'/%3E%3Ccircle cx='32' cy='32' r='6' fill='none' stroke='%23ffb020' stroke-width='1.2' opacity='0.4'/%3E%3Cpath d='M32 32 L50 18' stroke='%23ffb020' stroke-width='2.5' stroke-linecap='round'/%3E%3Ccircle cx='32' cy='32' r='2.5' fill='%23ffb020'/%3E%3C/svg%3E" />
 
 <!-- Leaflet -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -112,8 +114,21 @@
     position:relative;
     flex-shrink:0;
     overflow:hidden;
+    cursor:pointer;
+    background: transparent;
+    padding:0;
+    color: inherit;
   }
-  .crest svg{ width:20px; height:20px; fill: var(--amber); }
+  .crest:hover{
+    box-shadow: 0 0 12px rgba(255,176,32,0.35);
+    border-color: #ffc94d;
+  }
+  .crest:focus-visible{
+    outline:2px solid var(--amber);
+    outline-offset:2px;
+  }
+  .crest.spinning .sweep{ animation: spin 0.6s linear infinite; }
+  .crest svg{ width:20px; height:20px; fill: var(--amber); position:relative; z-index:1; }
   .crest .sweep{
     position:absolute; inset:0;
     background: conic-gradient(from 0deg, transparent 0deg, rgba(255,176,32,0.55) 18deg, transparent 40deg);
@@ -502,6 +517,16 @@
   }
   .feed-head .panel-label{ margin-bottom:6px; }
   .feed-filters{ display:flex; gap:6px; flex-wrap:wrap; }
+  .feed-filters.unit-filters{ margin-top:6px; }
+  .feed-filters .filter-group-label{
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    align-self: center;
+    margin-right: 2px;
+  }
   .filter-btn{
     font-family: var(--font-mono);
     font-size: 9.5px;
@@ -515,6 +540,7 @@
     cursor:pointer;
   }
   .filter-btn.active{ color: var(--void); background: var(--amber); border-color: var(--amber); font-weight:600; }
+  .filter-btn[data-unit-status].active{ color: var(--void); background: #5ba3ff; border-color: #5ba3ff; }
 
   .feed-list{
     flex:1;
@@ -713,10 +739,10 @@
 <div id="app">
 
   <header class="hdr">
-    <div class="crest">
-      <div class="sweep"></div>
-      <svg viewBox="0 0 24 24"><path d="M12 2 2 7v6c0 5 4.2 9 10 9s10-4 10-9V7l-10-5zm0 2.2 8 4V13c0 4-3.4 7.4-8 7.8V4.2z"/></svg>
-    </div>
+    <button type="button" class="crest" id="crest-refresh" title="Soft refresh — reload CAD data" aria-label="Soft refresh CAD data">
+      <div class="sweep" aria-hidden="true"></div>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 2 7v6c0 5 4.2 9 10 9s10-4 10-9V7l-10-5zm0 2.2 8 4V13c0 4-3.4 7.4-8 7.8V4.2z"/></svg>
+    </button>
     <div class="hdr-title">
       <div class="eyebrow">Montgomery County · Dept. of Public Safety</div>
       <h1>MONTCOXPLR <span style="color:var(--text-mid); font-weight:600;">— Live Incident Monitor</span></h1>
@@ -826,6 +852,14 @@
           <button class="filter-btn" data-filter="fire">Fire</button>
           <button class="filter-btn" data-filter="ems">EMS</button>
           <button class="filter-btn" data-filter="traffic">Traffic</button>
+        </div>
+        <div class="feed-filters unit-filters" title="Filter by assigned unit status (uses loaded unit data)">
+          <span class="filter-group-label">Units</span>
+          <button class="filter-btn active" data-unit-status="all">All</button>
+          <button class="filter-btn" data-unit-status="dispatched">Dispatched</button>
+          <button class="filter-btn" data-unit-status="enroute">Enroute</button>
+          <button class="filter-btn" data-unit-status="arrived">Arrived</button>
+          <button class="filter-btn" data-unit-status="clear">Clear</button>
         </div>
       </div>
       <div class="feed-list" id="feed-list">
