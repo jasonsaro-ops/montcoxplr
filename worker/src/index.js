@@ -1,52 +1,68 @@
 /**
  * MONTCOXPLR — Cloudflare Worker CORS relay
  * ---------------------------------------------------------------------
- * Montgomery County, PA serves two of the dashboard's data sources as
+ * Montgomery County, PA serves several of the dashboard's data sources as
  * plain HTML/RSS with no CORS headers, which a static GitHub Pages site
  * can't read directly from the browser:
  *
- *   /rss  -> https://webapp07.montcopa.org/eoc/cadinfo/livecadrss.asp
- *   /oos  -> https://webapp07.montcopa.org/eoc/cadinfo/livecad-unitsoos.asp
+ *   /rss       -> livecadrss.asp
+ *   /oos       -> livecad-unitsoos.asp
+ *   /incidents -> livecad-incidents.asp  (list + eid/num for unit lookup)
+ *   /units     -> livecad-incidents.asp?units=1&eid=&num=  (assigned units)
  *
  * This Worker fetches those on the dashboard's behalf, adds an
  * Access-Control-Allow-Origin header, and caches each response at the
- * edge for CACHE_SECONDS so many visitors loading the dashboard don't
- * each hit the county's server directly (their CAD data itself only
- * updates every 4-5 minutes anyway, so a short cache costs nothing).
+ * edge for CACHE_SECONDS (units use a shorter TTL so status stays fresh).
  *
  * Deploy: see /DEPLOY.md in the repo root. Once deployed, this Worker's
- * URL (something like https://montcoxplr-proxy.<subdomain>.workers.dev)
- * goes into CONFIG.sources.worker.baseUrl in app.js.
+ * URL goes into CONFIG.sources.worker.baseUrl in app.js.
  */
 
 const UPSTREAM = {
   rss: 'https://webapp07.montcopa.org/eoc/cadinfo/livecadrss.asp',
-  oos: 'https://webapp07.montcopa.org/eoc/cadinfo/livecad-unitsoos.asp'
+  oos: 'https://webapp07.montcopa.org/eoc/cadinfo/livecad-unitsoos.asp',
+  incidents: 'https://webapp07.montcopa.org/eoc/cadinfo/livecad-incidents.asp',
+  units: 'https://webapp07.montcopa.org/eoc/cadinfo/livecad-incidents.asp'
 };
 
-const CACHE_SECONDS = 60;
+const CACHE_SECONDS = {
+  rss: 60,
+  oos: 60,
+  incidents: 60,
+  units: 30
+};
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const route = url.pathname.replace(/^\/+|\/+$/g, ''); // '' | 'rss' | 'oos'
+    const route = url.pathname.replace(/^\/+|\/+$/g, ''); // '' | 'rss' | 'oos' | ...
 
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders(env) });
     }
 
     if (route === '' || route === 'health') {
-      return json({ ok: true, routes: ['/rss', '/oos'] }, 200, env);
+      return json({ ok: true, routes: ['/rss', '/oos', '/incidents', '/units'] }, 200, env);
     }
 
-    const upstreamUrl = UPSTREAM[route];
-    if (!upstreamUrl) {
-      return json({ error: 'Unknown route. Use /rss or /oos.' }, 404, env);
+    if (!UPSTREAM[route]) {
+      return json({ error: 'Unknown route. Use /rss, /oos, /incidents, or /units.' }, 404, env);
     }
 
-    // Edge cache keyed on this Worker's own URL, independent of the
-    // upstream's own cache behavior.
+    let upstreamUrl = UPSTREAM[route];
+    if (route === 'units') {
+      const eid = url.searchParams.get('eid') || '';
+      const num = url.searchParams.get('num') || '';
+      if (!eid || !num) {
+        return json({ error: 'units requires eid and num query params' }, 400, env);
+      }
+      upstreamUrl =
+        `${UPSTREAM.units}?units=1&eid=${encodeURIComponent(eid)}&num=${encodeURIComponent(num)}`;
+    }
+
+    const cacheTtl = CACHE_SECONDS[route] ?? 60;
     const cache = caches.default;
+    // Units include eid/num in the Worker URL so each incident caches separately.
     const cacheKey = new Request(url.toString(), { method: 'GET' });
 
     const cached = await cache.match(cacheKey);
@@ -57,7 +73,7 @@ export default {
     let upstreamResponse;
     try {
       upstreamResponse = await fetch(upstreamUrl, {
-        cf: { cacheTtl: CACHE_SECONDS, cacheEverything: true },
+        cf: { cacheTtl, cacheEverything: true },
         headers: {
           'User-Agent': 'MontcoXplrDashboard/1.0 (+https://github.com/jasonsaro-ops/montcoxplr)'
         }
@@ -79,7 +95,7 @@ export default {
       status: 200,
       headers: {
         'Content-Type': contentType,
-        'Cache-Control': `public, max-age=${CACHE_SECONDS}`
+        'Cache-Control': `public, max-age=${cacheTtl}`
       }
     });
 

@@ -26,8 +26,8 @@
    county's WebCAD Active Incidents page). The list HTML maps each
    incident number → internal eid; expanding a call requests
    ?units=1&eid=&num= and returns a small unit/status/time table.
-   Clicking an incident on this dashboard zooms the map and opens a
-   detail panel that lazy-loads those units.
+   Clicking an incident expands that card in the live feed column to
+   show assigned units (click again to collapse) and zooms the map.
 
    UNITS OUT OF SERVICE (separate panel) still comes from
    livecad-unitsoos.asp via the Cloudflare Worker / CORS proxies.
@@ -159,7 +159,9 @@ const state = {
   // incident number (e.g. E2671198) → { eid, num } from WebCAD list HTML
   incidentEidByNum: new Map(),
   // incident number → { units: [...], fetchedAt, status: 'loading'|'ok'|'empty'|'error' }
-  unitsCache: new Map()
+  unitsCache: new Map(),
+  // Feed card currently expanded to show assigned units (toggle on click)
+  expandedId: null
 };
 
 // ---------------------------------------------------------------------
@@ -171,7 +173,6 @@ document.addEventListener('DOMContentLoaded', () => {
   initFilters();
   initResetView();
   initAudioToggle();
-  initDetailPanel();
   refreshAll();
   refreshOos();
   setInterval(refreshAll, CONFIG.refreshIntervalMs);
@@ -393,7 +394,6 @@ function renderMarkers() {
         <div class="p-row">${escapeHtml(inc.municipality || '')}</div>
         <div class="p-row">Station: ${escapeHtml(inc.station || '—')}</div>
         <div class="p-row">Dispatched: ${escapeHtml(inc.dispatched || '—')}</div>
-        <div class="p-row" style="opacity:.7;margin-top:4px;">Click for assigned units</div>
       </div>
     `);
     marker.on('click', () => selectIncident(inc.id));
@@ -844,65 +844,33 @@ function parseUnitsHtml(html) {
 }
 
 // ---------------------------------------------------------------------
-// DETAIL PANEL (units + incident summary)
+// FEED CARD EXPAND — assigned units inline in the live feed column
 // ---------------------------------------------------------------------
-function openDetailPanel(inc) {
-  const panel = document.getElementById('detail-panel');
-  if (!panel || !inc) return;
-
-  panel.classList.add('open');
-  panel.dataset.incidentId = inc.id;
-
-  const catColor = COLORS[inc.cat] || COLORS.other;
-  document.getElementById('detail-type').textContent = inc.type || 'INCIDENT';
-  document.getElementById('detail-type').style.color = catColor;
-  document.getElementById('detail-num').textContent = inc.incidentno || '';
-  document.getElementById('detail-loc').textContent =
-    [inc.address, inc.municipality].filter(Boolean).join(' · ') || '—';
-  document.getElementById('detail-meta').textContent = [
-    inc.station ? `Station ${inc.station}` : null,
-    inc.dispatched ? `Dispatched ${inc.dispatched}` : null
-  ].filter(Boolean).join(' · ') || '';
-
-  const unitsEl = document.getElementById('detail-units');
-  unitsEl.innerHTML = `<div class="detail-units-loading">Loading assigned units…</div>`;
-
-  loadAndRenderUnits(inc);
-}
-
-function closeDetailPanel() {
-  const panel = document.getElementById('detail-panel');
-  if (panel) {
-    panel.classList.remove('open');
-    delete panel.dataset.incidentId;
-  }
-}
-
-async function loadAndRenderUnits(inc) {
-  const unitsEl = document.getElementById('detail-units');
+async function loadAndRenderUnits(inc, unitsEl) {
   if (!unitsEl || !inc) return;
 
   const num = (inc.incidentno || '').trim().toUpperCase();
   if (!num) {
     unitsEl.innerHTML =
-      `<div class="detail-units-empty">No incident number — unit list unavailable for this source.</div>`;
+      `<div class="card-units-empty">No incident number — unit list unavailable for this source.</div>`;
     return;
   }
 
-  // Serve from short-lived cache if present
   const cached = state.unitsCache.get(num);
-  if (cached && cached.status === 'ok' && (Date.now() - cached.fetchedAt) < 45000) {
-    renderUnitsList(unitsEl, cached.units);
+  if (cached && (cached.status === 'ok' || cached.status === 'empty') &&
+      (Date.now() - cached.fetchedAt) < 45000) {
+    if (cached.status === 'ok') renderUnitsList(unitsEl, cached.units);
+    else unitsEl.innerHTML =
+      `<div class="card-units-empty">No units currently assigned to this incident.</div>`;
     return;
   }
 
-  unitsEl.innerHTML = `<div class="detail-units-loading">Loading assigned units…</div>`;
+  unitsEl.innerHTML = `<div class="card-units-loading">Loading assigned units…</div>`;
   state.unitsCache.set(num, { status: 'loading', units: [], fetchedAt: Date.now() });
 
   const result = await fetchUnitsForIncident(num);
-  // Ignore if user already selected a different incident
-  const panel = document.getElementById('detail-panel');
-  if (panel && panel.dataset.incidentId !== inc.id) return;
+  // Ignore if this card is no longer the expanded one
+  if (state.expandedId !== inc.id) return;
 
   state.unitsCache.set(num, {
     status: result.status,
@@ -914,21 +882,21 @@ async function loadAndRenderUnits(inc) {
     renderUnitsList(unitsEl, result.units);
   } else if (result.status === 'empty') {
     unitsEl.innerHTML =
-      `<div class="detail-units-empty">No units currently assigned to this incident.</div>`;
+      `<div class="card-units-empty">No units currently assigned to this incident.</div>`;
   } else {
     unitsEl.innerHTML =
-      `<div class="detail-units-empty">${escapeHtml(result.message || 'Unit information unavailable.')}</div>`;
+      `<div class="card-units-empty">${escapeHtml(result.message || 'Unit information unavailable.')}</div>`;
   }
 }
 
 function renderUnitsList(container, units) {
   if (!units || units.length === 0) {
     container.innerHTML =
-      `<div class="detail-units-empty">No units currently assigned to this incident.</div>`;
+      `<div class="card-units-empty">No units currently assigned to this incident.</div>`;
     return;
   }
   container.innerHTML = `
-    <table class="detail-units-table">
+    <table class="card-units-table">
       <thead><tr><th>Unit</th><th>Status</th><th>Time</th></tr></thead>
       <tbody>
         ${units.map((u) => `
@@ -950,19 +918,6 @@ function statusClass(status) {
   if (/dispatch|assigned|queued/.test(s)) return 's-dispatched';
   if (/clear|available|transport/.test(s)) return 's-clear';
   return 's-other';
-}
-
-function initDetailPanel() {
-  const closeBtn = document.getElementById('detail-close');
-  if (closeBtn) closeBtn.addEventListener('click', closeDetailPanel);
-  // Close when clicking the dimmed backdrop (panel itself stops propagation)
-  const panel = document.getElementById('detail-panel');
-  if (panel) {
-    panel.addEventListener('click', (e) => e.stopPropagation());
-  }
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeDetailPanel();
-  });
 }
 
 // ---------------------------------------------------------------------
@@ -1071,8 +1026,11 @@ function renderFeedList() {
     return;
   }
 
-  list.innerHTML = filtered.slice(0, 80).map((i) => `
-    <div class="incident-card ${i.id === state.selectedId ? 'selected' : ''}" data-cat="${i.cat}" data-id="${i.id}">
+  list.innerHTML = filtered.slice(0, 80).map((i) => {
+    const expanded = i.id === state.expandedId;
+    return `
+    <div class="incident-card ${i.id === state.selectedId ? 'selected' : ''} ${expanded ? 'expanded' : ''}"
+         data-cat="${i.cat}" data-id="${i.id}" aria-expanded="${expanded}">
       <div class="top-row">
         <div class="type">${escapeHtml(i.type)}</div>
         <div class="time">${escapeHtml(relativeTime(i._sortKey))}</div>
@@ -1086,35 +1044,58 @@ function renderFeedList() {
         <span class="${i.lat != null ? 'geo-yes' : 'geo-no'}">${i.lat != null ? 'MAPPED' : 'NO GEO'}</span>
         <span>${i.source.toUpperCase()}</span>
       </div>
-      ${i.lat != null ? `<div class="zoom-hint">⌖ Click to zoom on map</div>` : ''}
+      <div class="expand-hint">${expanded ? '▲ Hide units' : '▼ Units / zoom'}</div>
+      <div class="card-units" ${expanded ? '' : 'hidden'}>
+        <div class="card-units-label">Assigned units</div>
+        <div class="card-units-body">
+          ${expanded ? '<div class="card-units-loading">Loading assigned units…</div>' : ''}
+        </div>
+      </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 
   list.querySelectorAll('.incident-card').forEach((card) => {
     card.addEventListener('click', () => selectIncident(card.dataset.id));
   });
+
+  // Lazy-load units into the expanded card (if any)
+  if (state.expandedId) {
+    const inc = state.incidents.find((i) => i.id === state.expandedId);
+    const body = list.querySelector(
+      `.incident-card[data-id="${CSS.escape(state.expandedId)}"] .card-units-body`
+    );
+    if (inc && body) loadAndRenderUnits(inc, body);
+  }
 }
 
 function selectIncident(id) {
   const inc = state.incidents.find((i) => i.id === id);
   if (!inc) return;
 
-  state.selectedId = id;
-  document.querySelectorAll('.incident-card').forEach((c) => {
-    c.classList.toggle('selected', c.dataset.id === id);
-  });
+  // Toggle expand in the feed list: click again collapses.
+  const collapsing = state.expandedId === id;
+  state.expandedId = collapsing ? null : id;
+  state.selectedId = collapsing ? null : id;
 
-  if (inc.lat != null && inc.lon != null) {
+  // Zoom / popup only when opening (not when collapsing)
+  if (!collapsing && inc.lat != null && inc.lon != null) {
     state.map.flyTo([inc.lat, inc.lon], Math.max(state.map.getZoom(), 15), { animate: true, duration: 0.6 });
     const marker = state.markers.get(inc.id);
     if (marker) {
-      // popup can only open once the flyTo settles on some browsers
       setTimeout(() => marker.openPopup(), 350);
     }
   }
 
-  // Floating detail panel with assigned units (lazy-loaded from WebCAD).
-  openDetailPanel(inc);
+  renderFeedList();
+
+  // Keep the expanded card in view inside the feed column
+  if (state.expandedId) {
+    const card = document.querySelector(
+      `.incident-card[data-id="${CSS.escape(state.expandedId)}"]`
+    );
+    if (card) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
 }
 
 function renderTicker() {

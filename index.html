@@ -416,67 +416,21 @@
   }
   .demo-banner.show{ display:block; }
 
-  /* Floating incident detail panel (assigned units) */
-  .detail-panel{
-    display:none;
-    position:absolute;
-    top:16px;
-    right:16px;
-    width:min(340px, calc(100% - 32px));
-    max-height:calc(100% - 32px);
-    z-index:650;
-    background:var(--panel-raise);
-    border:1px solid rgba(255,255,255,0.08);
-    border-radius:12px;
-    box-shadow:0 12px 40px rgba(0,0,0,0.55);
-    overflow:hidden;
-    flex-direction:column;
-  }
-  .detail-panel.open{ display:flex; }
-  .detail-head{
-    display:flex;
-    align-items:flex-start;
-    gap:10px;
-    padding:14px 14px 10px;
-    border-bottom:1px solid rgba(255,255,255,0.06);
-  }
-  .detail-head-text{ flex:1; min-width:0; }
-  .detail-type{
-    font-size:14px;
-    font-weight:700;
-    letter-spacing:0.02em;
-    line-height:1.25;
-  }
-  .detail-num{
-    font-family:var(--font-mono, ui-monospace, monospace);
-    font-size:11px;
+  /* Inline unit list inside expanded feed cards */
+  .incident-card .expand-hint{
+    font-size:10px;
     color:var(--text-dim);
-    margin-top:2px;
+    margin-top:6px;
+    letter-spacing:0.04em;
   }
-  .detail-close{
-    flex-shrink:0;
-    width:28px; height:28px;
-    border:0;
-    border-radius:6px;
-    background:rgba(255,255,255,0.06);
-    color:var(--text-mid);
-    cursor:pointer;
-    font-size:16px;
-    line-height:1;
+  .incident-card.expanded .expand-hint{ color:var(--amber, #f5c142); }
+  .incident-card .card-units{
+    margin-top:10px;
+    padding-top:10px;
+    border-top:1px solid rgba(255,255,255,0.06);
   }
-  .detail-close:hover{ background:rgba(255,255,255,0.12); color:#fff; }
-  .detail-body{ padding:12px 14px 14px; overflow-y:auto; }
-  .detail-loc{
-    font-size:12.5px;
-    color:var(--text-mid);
-    margin-bottom:4px;
-  }
-  .detail-meta{
-    font-size:11px;
-    color:var(--text-dim);
-    margin-bottom:12px;
-  }
-  .detail-units-label{
+  .incident-card .card-units[hidden]{ display:none; }
+  .card-units-label{
     font-size:10px;
     font-weight:700;
     letter-spacing:0.08em;
@@ -484,18 +438,18 @@
     color:var(--text-dim);
     margin-bottom:8px;
   }
-  .detail-units-loading,
-  .detail-units-empty{
+  .card-units-loading,
+  .card-units-empty{
     font-size:12px;
     color:var(--text-dim);
-    padding:8px 0;
+    padding:4px 0 2px;
   }
-  .detail-units-table{
+  .card-units-table{
     width:100%;
     border-collapse:collapse;
     font-size:12px;
   }
-  .detail-units-table th{
+  .card-units-table th{
     text-align:left;
     font-size:10px;
     font-weight:700;
@@ -505,12 +459,12 @@
     padding:0 0 6px;
     border-bottom:1px solid rgba(255,255,255,0.06);
   }
-  .detail-units-table td{
+  .card-units-table td{
     padding:7px 6px 7px 0;
     border-bottom:1px solid rgba(255,255,255,0.04);
     vertical-align:middle;
   }
-  .detail-units-table tr:last-child td{ border-bottom:0; }
+  .card-units-table tr:last-child td{ border-bottom:0; }
   .du-unit{
     font-family:var(--font-mono, ui-monospace, monospace);
     font-weight:600;
@@ -861,25 +815,6 @@
         Reset View
       </button>
       <div class="demo-banner" id="demo-banner">⚠ Live feeds unreachable — showing sample data</div>
-
-      <!-- Floating detail panel: incident summary + assigned units -->
-      <div class="detail-panel" id="detail-panel" role="dialog" aria-label="Incident detail">
-        <div class="detail-head">
-          <div class="detail-head-text">
-            <div class="detail-type" id="detail-type">—</div>
-            <div class="detail-num" id="detail-num"></div>
-          </div>
-          <button type="button" class="detail-close" id="detail-close" title="Close" aria-label="Close">×</button>
-        </div>
-        <div class="detail-body">
-          <div class="detail-loc" id="detail-loc"></div>
-          <div class="detail-meta" id="detail-meta"></div>
-          <div class="detail-units-label">Assigned units</div>
-          <div id="detail-units">
-            <div class="detail-units-loading">Select an incident…</div>
-          </div>
-        </div>
-      </div>
     </div>
 
     <!-- RIGHT: LIVE FEED -->
