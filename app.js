@@ -459,12 +459,16 @@ function initMap() {
   }
   state.overlayLayer = L.layerGroup([], { pane: 'overlays' }).addTo(m);
 
-  // Restore last-chosen basemap (default: dark console OSM)
+  // Default basemap is Dark (inverted OSM). Restore last valid choice if any;
+  // retired styles (e.g. old CARTO ids) fall back to dark and clear storage.
   let saved = 'dark';
   try {
     saved = localStorage.getItem('montcoxplr_basemap') || 'dark';
   } catch (err) { /* ignore */ }
-  if (!BASEMAPS[saved]) saved = 'dark';
+  if (!BASEMAPS[saved]) {
+    saved = 'dark';
+    try { localStorage.removeItem('montcoxplr_basemap'); } catch (err) { /* ignore */ }
+  }
   setBasemap(saved, { silent: true });
   initBasemapPicker();
 }
