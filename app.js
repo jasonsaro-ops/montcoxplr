@@ -120,6 +120,14 @@ const CONFIG = {
         (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
         (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`
       ]
+    },
+
+    // County open-data overlays (same feeds as the WebCAD side pages).
+    overlays: {
+      powerOutages: 'https://gis.montcopa.org/opendata/data/power-outages.geojson',
+      roadConditions: 'https://gis.montcopa.org/opendata/data/road-conditions.geojson',
+      winterConditions: 'https://gis.montcopa.org/opendata/data/winter-conditions.geojson',
+      plannedEvents: 'https://gis.montcopa.org/opendata/data/planned-events.geojson'
     }
   }
 };
@@ -137,7 +145,20 @@ const COLORS = {
   fire: '#ff4438',
   ems: '#2f8fff',
   traffic: '#f5c142',
+  outage: '#ff6b00',
+  road511: '#c44dff',
+  winter: '#7ec8ff',
+  planned: '#ff4d9a',
   other: '#9c7cf0'
+};
+
+// County-style outage severity fills (None / Minor / Moderate / Major / Severe)
+const OUTAGE_SEVERITY_COLORS = {
+  none: '#c5cdd6',
+  minor: '#f7e08a',
+  moderate: '#f0b429',
+  major: '#e67e22',
+  severe: '#c0392b'
 };
 
 // ---------------------------------------------------------------------
@@ -162,7 +183,9 @@ const state = {
   // incident number → { units: [...], fetchedAt, status: 'loading'|'ok'|'empty'|'error' }
   unitsCache: new Map(),
   // Feed card currently expanded to show assigned units (toggle on click)
-  expandedId: null
+  expandedId: null,
+  // Leaflet layer group for polygon/line overlays (outages, winter roads)
+  overlayLayer: null
 };
 
 // ---------------------------------------------------------------------
@@ -367,6 +390,7 @@ function initMap() {
   });
 
   primaryTiles.addTo(m);
+  state.overlayLayer = L.layerGroup().addTo(m);
   state.map = m;
 }
 
@@ -388,6 +412,7 @@ function renderMarkers() {
   // clear stale markers
   state.markers.forEach((marker) => state.map.removeLayer(marker));
   state.markers.clear();
+  if (state.overlayLayer) state.overlayLayer.clearLayers();
 
   const visible = state.incidents.filter(
     (i) => i.lat != null && i.lon != null &&
@@ -395,24 +420,96 @@ function renderMarkers() {
   );
 
   visible.forEach((inc) => {
-    const marker = L.marker([inc.lat, inc.lon], { icon: makeDivIcon(inc.cat) });
-    marker.bindPopup(`
-      <div class="popup-inner">
-        <div class="p-type" style="color:${COLORS[inc.cat] || COLORS.other}">${escapeHtml(inc.type)}</div>
-        ${inc.incidentno ? `<div class="p-row">${escapeHtml(inc.incidentno)}</div>` : ''}
-        <div class="p-row">${escapeHtml(inc.address)}</div>
-        <div class="p-row">${escapeHtml(inc.municipality || '')}</div>
-        <div class="p-row">Station: ${escapeHtml(inc.station || '—')}</div>
-        <div class="p-row">Dispatched: ${escapeHtml(inc.dispatched || '—')}</div>
-      </div>
-    `);
-    marker.on('click', () => selectIncident(inc.id));
-    marker.addTo(state.map);
-    state.markers.set(inc.id, marker);
+    // Polygon / line overlays (power outages, winter road segments)
+    if (inc.geometry && state.overlayLayer) {
+      try {
+        const style = overlayStyleFor(inc);
+        const layer = L.geoJSON(inc.geometry, { style: () => style });
+        layer.on('click', () => selectIncident(inc.id));
+        layer.bindPopup(buildPopupHtml(inc));
+        layer.addTo(state.overlayLayer);
+      } catch (err) { /* ignore bad geometry */ }
+    }
+
+    // Point markers for CAD + 511 points (and centroid pins for overlays)
+    if (inc.geometry && (inc.cat === 'outage' || inc.cat === 'winter')) {
+      // geometry already drawn; skip duplicate centroid pulse for polygons
+      // still allow click via polygon; optional small centroid omitted
+    } else {
+      const marker = L.marker([inc.lat, inc.lon], { icon: makeDivIcon(inc.cat) });
+      marker.bindPopup(buildPopupHtml(inc));
+      marker.on('click', () => selectIncident(inc.id));
+      marker.addTo(state.map);
+      state.markers.set(inc.id, marker);
+    }
   });
 
   document.getElementById('badge-count').textContent = visible.length;
   document.getElementById('badge-time').textContent = new Date().toLocaleTimeString();
+}
+
+function buildPopupHtml(inc) {
+  const color = COLORS[inc.cat] || COLORS.other;
+  return `
+    <div class="popup-inner">
+      <div class="p-type" style="color:${color}">${escapeHtml(inc.type)}</div>
+      ${inc.incidentno ? `<div class="p-row">${escapeHtml(inc.incidentno)}</div>` : ''}
+      <div class="p-row">${escapeHtml(inc.address || '')}</div>
+      <div class="p-row">${escapeHtml(inc.municipality || '')}</div>
+      ${inc.station ? `<div class="p-row">Station: ${escapeHtml(inc.station)}</div>` : ''}
+      ${inc.description ? `<div class="p-row">${escapeHtml(inc.description)}</div>` : ''}
+      ${inc.dispatched ? `<div class="p-row">${escapeHtml(inc.dispatched)}</div>` : ''}
+    </div>
+  `;
+}
+
+function overlayStyleFor(inc) {
+  if (inc.cat === 'outage') {
+    const fill = OUTAGE_SEVERITY_COLORS[inc.severity] || OUTAGE_SEVERITY_COLORS.moderate;
+    return {
+      color: '#ff6b00',
+      weight: 1.5,
+      fillColor: fill,
+      fillOpacity: 0.45,
+      opacity: 0.9
+    };
+  }
+  if (inc.cat === 'winter') {
+    const isClear = /clear/i.test(inc.severity || inc.type || '');
+    return {
+      color: isClear ? '#7ec8ff' : '#3d9be9',
+      weight: isClear ? 2 : 4,
+      opacity: isClear ? 0.35 : 0.85
+    };
+  }
+  return { color: COLORS[inc.cat] || COLORS.other, weight: 2, fillOpacity: 0.3 };
+}
+
+function outageSeverity(percentOut, customersOut) {
+  const pct = Number(percentOut) || 0;
+  const n = Number(customersOut) || 0;
+  if (n <= 0 && pct <= 0) return 'none';
+  if (pct < 0.5 && n < 50) return 'minor';
+  if (pct < 2 || n < 200) return 'moderate';
+  if (pct < 10 || n < 1000) return 'major';
+  return 'severe';
+}
+
+function centroidOfGeometry(geom) {
+  if (!geom) return null;
+  const pts = [];
+  const walk = (c) => {
+    if (typeof c[0] === 'number' && typeof c[1] === 'number') {
+      pts.push(c);
+      return;
+    }
+    if (Array.isArray(c)) c.forEach(walk);
+  };
+  walk(geom.coordinates);
+  if (!pts.length) return null;
+  let sx = 0, sy = 0;
+  pts.forEach(([x, y]) => { sx += x; sy += y; });
+  return { lon: sx / pts.length, lat: sy / pts.length };
 }
 
 // ---------------------------------------------------------------------
@@ -969,6 +1066,173 @@ function incidentMatchesUnitFilter(inc) {
 }
 
 // ---------------------------------------------------------------------
+// OVERLAYS — power outages + 511 road / winter / planned events
+// ---------------------------------------------------------------------
+async function fetchJsonOverlay(url) {
+  const res = await fetch(url + (url.includes('?') ? '&' : '?') + '_ts=' + Date.now(), {
+    cache: 'no-store'
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const text = await res.text();
+  const cleaned = text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+  return JSON.parse(cleaned);
+}
+
+async function fetchOverlays() {
+  const urls = CONFIG.sources.overlays || {};
+  const results = await Promise.allSettled([
+    urls.powerOutages ? fetchJsonOverlay(urls.powerOutages) : Promise.resolve(null),
+    urls.roadConditions ? fetchJsonOverlay(urls.roadConditions) : Promise.resolve(null),
+    urls.winterConditions ? fetchJsonOverlay(urls.winterConditions) : Promise.resolve(null),
+    urls.plannedEvents ? fetchJsonOverlay(urls.plannedEvents) : Promise.resolve(null)
+  ]);
+
+  const items = [];
+  const [power, road, winter, events] = results;
+
+  if (power.status === 'fulfilled' && power.value) {
+    items.push(...normalizePowerOutages(power.value));
+  }
+  if (road.status === 'fulfilled' && road.value) {
+    items.push(...normalizeRoadConditions(road.value));
+  }
+  if (winter.status === 'fulfilled' && winter.value) {
+    items.push(...normalizeWinterConditions(winter.value));
+  }
+  if (events.status === 'fulfilled' && events.value) {
+    items.push(...normalizePlannedEvents(events.value));
+  }
+  return items;
+}
+
+function normalizePowerOutages(fc) {
+  const features = fc.features || [];
+  return features.map((f, idx) => {
+    const p = f.properties || {};
+    const customersOut = Number(p.customers_out) || 0;
+    if (customersOut <= 0) return null; // only active outages
+    const severity = outageSeverity(p.percent_out, customersOut);
+    const c = centroidOfGeometry(f.geometry);
+    if (!c) return null;
+    const util = p.primary_utility || p.utilities || 'Utility';
+    const pct = p.percent_out != null ? `${p.percent_out}%` : '';
+    const etr = p.etr && p.etr !== 'ETR-NULL' ? `ETR ${p.etr}` : 'ETR unknown';
+    return {
+      id: `outage-${p.municipality || idx}`,
+      incidentno: '',
+      type: `POWER OUTAGE — ${String(util).toUpperCase()}`,
+      address: `${customersOut} customers out${pct ? ` (${pct})` : ''}`,
+      municipality: p.municipality || '',
+      station: '',
+      dispatched: p.last_updated ? formatMaybeDate(p.last_updated) : '',
+      description: `${etr}${p.customers_out_is_estimate ? ' · estimate' : ''}`,
+      cat: 'outage',
+      severity,
+      lat: c.lat,
+      lon: c.lon,
+      geometry: f.geometry,
+      source: 'outage',
+      _sortKey: toSortKey(p.last_updated) || Date.now()
+    };
+  }).filter(Boolean);
+}
+
+function normalizeRoadConditions(fc) {
+  const features = fc.features || [];
+  return features.map((f, idx) => {
+    const p = f.properties || {};
+    let lat = null, lon = null;
+    if (f.geometry && f.geometry.type === 'Point') {
+      [lon, lat] = f.geometry.coordinates;
+    } else {
+      const c = centroidOfGeometry(f.geometry);
+      if (c) { lat = c.lat; lon = c.lon; }
+    }
+    if (lat == null || lon == null) return null;
+    const eventType = (p.eventType || p.severity || 'road condition').toUpperCase();
+    const lane = p.laneStatus || p.severity || '';
+    return {
+      id: `road511-${p.eventID || idx}`,
+      incidentno: p.eventID ? String(p.eventID) : '',
+      type: `511 ${eventType}${lane ? ' — ' + String(lane).toUpperCase() : ''}`,
+      address: p.facility || p.description || 'Road condition',
+      municipality: p.incidentMuniName || p.countyName || '',
+      station: '',
+      dispatched: p.lastUpdate || p.createTime || '',
+      description: p.description || '',
+      cat: 'road511',
+      severity: String(p.severity || lane || '').toLowerCase(),
+      lat, lon,
+      geometry: null,
+      source: 'road511',
+      _sortKey: toSortKey(p.lastUpdate || p.createTime) || Date.now()
+    };
+  }).filter(Boolean);
+}
+
+function normalizeWinterConditions(fc) {
+  const features = fc.features || [];
+  return features.map((f, idx) => {
+    const p = f.properties || {};
+    const cond = String(p.condition || p.condClass || 'Unknown');
+    // Skip fully clear segments to reduce map noise (still available if filter set)
+    const isClear = /^clear$/i.test(cond) || /^clear$/i.test(p.condClass || '');
+    if (isClear) return null;
+    const c = centroidOfGeometry(f.geometry);
+    if (!c) return null;
+    return {
+      id: `winter-${p.roadSectionID || idx}`,
+      incidentno: p.roadSectionID ? String(p.roadSectionID) : '',
+      type: `WINTER — ${cond.toUpperCase()}`,
+      address: p.facility || [p.fromLoc, p.toLoc].filter(Boolean).join(' → ') || 'Road section',
+      municipality: p.countyName || '',
+      station: '',
+      dispatched: p.lastUpdate || '',
+      description: [p.fromLoc, p.toLoc].filter(Boolean).join(' → '),
+      cat: 'winter',
+      severity: String(p.condClass || cond).toLowerCase(),
+      lat: c.lat,
+      lon: c.lon,
+      geometry: f.geometry,
+      source: 'winter',
+      _sortKey: toSortKey(p.lastUpdate) || Date.now()
+    };
+  }).filter(Boolean);
+}
+
+function normalizePlannedEvents(fc) {
+  const features = fc.features || [];
+  return features.map((f, idx) => {
+    const p = f.properties || {};
+    let lat = null, lon = null;
+    if (f.geometry && f.geometry.type === 'Point') {
+      [lon, lat] = f.geometry.coordinates;
+    } else {
+      const c = centroidOfGeometry(f.geometry);
+      if (c) { lat = c.lat; lon = c.lon; }
+    }
+    if (lat == null || lon == null) return null;
+    const title = p.eventType || p.description || p.facility || 'Planned event';
+    return {
+      id: `planned-${p.eventID || idx}`,
+      incidentno: p.eventID ? String(p.eventID) : '',
+      type: `PLANNED — ${String(title).toUpperCase()}`,
+      address: p.facility || p.description || 'Planned event',
+      municipality: p.incidentMuniName || p.countyName || '',
+      station: '',
+      dispatched: p.lastUpdate || p.createTime || '',
+      description: p.description || '',
+      cat: 'planned',
+      severity: String(p.severity || '').toLowerCase(),
+      lat, lon,
+      geometry: f.geometry && f.geometry.type !== 'Point' ? f.geometry : null,
+      source: 'planned',
+      _sortKey: toSortKey(p.lastUpdate || p.createTime) || Date.now()
+    };
+  }).filter(Boolean);
+}
+
+// ---------------------------------------------------------------------
 // REFRESH ORCHESTRATION
 // ---------------------------------------------------------------------
 async function refreshAll() {
@@ -998,6 +1262,16 @@ async function refreshAll() {
   } else {
     // ArcGIS won — mark RSS idle rather than "connecting".
     if (state.sourceStatus.rss === 'connecting') setSourceStatus('rss', 'down');
+  }
+
+  // 3) Merge county overlays (outages + 511) — never block CAD if they fail.
+  try {
+    const overlayItems = await fetchOverlays();
+    if (overlayItems && overlayItems.length) {
+      combined = combined.concat(overlayItems);
+    }
+  } catch (err) {
+    console.warn('[montcoxplr] overlay fetch failed', err);
   }
 
   if (combined.length === 0 && CONFIG.demoAfterFailedSources) {
@@ -1055,12 +1329,20 @@ async function refreshAll() {
 // RENDER: stats / feed list / ticker
 // ---------------------------------------------------------------------
 function renderStats() {
-  const counts = { fire: 0, ems: 0, traffic: 0, other: 0 };
+  const counts = {
+    fire: 0, ems: 0, traffic: 0,
+    outage: 0, road511: 0, winter: 0, planned: 0, other: 0
+  };
   state.incidents.forEach((i) => { counts[i.cat] = (counts[i.cat] || 0) + 1; });
-  document.getElementById('stat-all').textContent = state.incidents.length;
-  document.getElementById('stat-fire').textContent = counts.fire;
-  document.getElementById('stat-ems').textContent = counts.ems;
-  document.getElementById('stat-traffic').textContent = counts.traffic;
+  const set = (id, n) => { const el = document.getElementById(id); if (el) el.textContent = n; };
+  set('stat-all', state.incidents.length);
+  set('stat-fire', counts.fire);
+  set('stat-ems', counts.ems);
+  set('stat-traffic', counts.traffic);
+  set('stat-outage', counts.outage);
+  set('stat-road511', counts.road511);
+  set('stat-winter', counts.winter);
+  set('stat-planned', counts.planned);
 }
 
 function renderFeedList() {

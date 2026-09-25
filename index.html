@@ -233,6 +233,10 @@
   .stat-card[data-cat="fire"]{ border-left-color: var(--fire); }
   .stat-card[data-cat="ems"]{ border-left-color: var(--ems); }
   .stat-card[data-cat="traffic"]{ border-left-color: var(--traffic); }
+  .stat-card[data-cat="outage"]{ border-left-color: #ff6b00; }
+  .stat-card[data-cat="road511"]{ border-left-color: #c44dff; }
+  .stat-card[data-cat="winter"]{ border-left-color: #7ec8ff; }
+  .stat-card[data-cat="planned"]{ border-left-color: #ff4d9a; }
   .stat-card[data-cat="other"]{ border-left-color: var(--other); }
   .stat-card[data-cat="all"]{ border-left-color: var(--amber); }
 
@@ -263,6 +267,10 @@
   .swatch.fire{ background: var(--fire); box-shadow:0 0 6px var(--fire); }
   .swatch.ems{ background: var(--ems); box-shadow:0 0 6px var(--ems); }
   .swatch.traffic{ background: var(--traffic); box-shadow:0 0 6px var(--traffic); }
+  .swatch.outage{ background: #ff6b00; box-shadow:0 0 6px #ff6b00; }
+  .swatch.road511{ background: #c44dff; box-shadow:0 0 6px #c44dff; }
+  .swatch.winter{ background: #7ec8ff; box-shadow:0 0 6px #7ec8ff; }
+  .swatch.planned{ background: #ff4d9a; box-shadow:0 0 6px #ff4d9a; }
   .swatch.other{ background: var(--other); box-shadow:0 0 6px var(--other); }
 
   .aux-block{
@@ -565,6 +573,10 @@
   .incident-card[data-cat="fire"]{ border-left-color: var(--fire); }
   .incident-card[data-cat="ems"]{ border-left-color: var(--ems); }
   .incident-card[data-cat="traffic"]{ border-left-color: var(--traffic); }
+  .incident-card[data-cat="outage"]{ border-left-color: #ff6b00; }
+  .incident-card[data-cat="road511"]{ border-left-color: #c44dff; }
+  .incident-card[data-cat="winter"]{ border-left-color: #7ec8ff; }
+  .incident-card[data-cat="planned"]{ border-left-color: #ff4d9a; }
   .incident-card[data-cat="other"]{ border-left-color: var(--other); }
   @keyframes fade-in{ from{ opacity:0; transform: translateY(-4px);} to{ opacity:1; transform:none;} }
 
@@ -788,6 +800,22 @@
             <div class="n" id="stat-traffic">0</div>
             <div class="label">Traffic</div>
           </div>
+          <div class="stat-card" data-cat="outage">
+            <div class="n" id="stat-outage">0</div>
+            <div class="label">Power outage</div>
+          </div>
+          <div class="stat-card" data-cat="road511">
+            <div class="n" id="stat-road511">0</div>
+            <div class="label">511 road</div>
+          </div>
+          <div class="stat-card" data-cat="winter">
+            <div class="n" id="stat-winter">0</div>
+            <div class="label">Winter road</div>
+          </div>
+          <div class="stat-card" data-cat="planned">
+            <div class="n" id="stat-planned">0</div>
+            <div class="label">Planned event</div>
+          </div>
         </div>
       </div>
 
@@ -797,6 +825,10 @@
           <div class="legend-row"><span class="swatch fire"></span> Fire dispatch</div>
           <div class="legend-row"><span class="swatch ems"></span> EMS dispatch</div>
           <div class="legend-row"><span class="swatch traffic"></span> Traffic / MVA</div>
+          <div class="legend-row"><span class="swatch outage"></span> Power outage</div>
+          <div class="legend-row"><span class="swatch road511"></span> 511 road condition</div>
+          <div class="legend-row"><span class="swatch winter"></span> Winter road condition</div>
+          <div class="legend-row"><span class="swatch planned"></span> 511 planned event</div>
           <div class="legend-row"><span class="swatch other"></span> Other / unclassified</div>
         </div>
         <p style="font-size:10.5px; color:var(--text-dim); margin-top:8px; line-height:1.4;">
@@ -852,6 +884,10 @@
           <button class="filter-btn" data-filter="fire">Fire</button>
           <button class="filter-btn" data-filter="ems">EMS</button>
           <button class="filter-btn" data-filter="traffic">Traffic</button>
+          <button class="filter-btn" data-filter="outage">Outage</button>
+          <button class="filter-btn" data-filter="road511">511 Road</button>
+          <button class="filter-btn" data-filter="winter">Winter</button>
+          <button class="filter-btn" data-filter="planned">Planned</button>
         </div>
         <div class="feed-filters unit-filters" title="Filter by assigned unit status (uses loaded unit data)">
           <span class="filter-group-label">Units</span>
