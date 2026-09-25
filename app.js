@@ -431,17 +431,12 @@ function renderMarkers() {
       } catch (err) { /* ignore bad geometry */ }
     }
 
-    // Point markers for CAD + 511 points (and centroid pins for overlays)
-    if (inc.geometry && (inc.cat === 'outage' || inc.cat === 'winter')) {
-      // geometry already drawn; skip duplicate centroid pulse for polygons
-      // still allow click via polygon; optional small centroid omitted
-    } else {
-      const marker = L.marker([inc.lat, inc.lon], { icon: makeDivIcon(inc.cat) });
-      marker.bindPopup(buildPopupHtml(inc));
-      marker.on('click', () => selectIncident(inc.id));
-      marker.addTo(state.map);
-      state.markers.set(inc.id, marker);
-    }
+    // Point / centroid markers (always — outage polygons also get a pin)
+    const marker = L.marker([inc.lat, inc.lon], { icon: makeDivIcon(inc.cat) });
+    marker.bindPopup(buildPopupHtml(inc));
+    marker.on('click', () => selectIncident(inc.id));
+    marker.addTo(state.map);
+    state.markers.set(inc.id, marker);
   });
 
   document.getElementById('badge-count').textContent = visible.length;
@@ -1068,40 +1063,70 @@ function incidentMatchesUnitFilter(inc) {
 // ---------------------------------------------------------------------
 // OVERLAYS — power outages + 511 road / winter / planned events
 // ---------------------------------------------------------------------
-async function fetchJsonOverlay(url) {
-  const res = await fetch(url + (url.includes('?') ? '&' : '?') + '_ts=' + Date.now(), {
-    cache: 'no-store'
-  });
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  const text = await res.text();
-  const cleaned = text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
-  return JSON.parse(cleaned);
+// gis.montcopa.org GeoJSON has no Access-Control-Allow-Origin, so the
+// browser blocks a direct fetch from GitHub Pages. Prefer the Worker
+// relay, then public CORS proxies, then a direct attempt last.
+function overlayCandidateUrls(key, upstreamUrl) {
+  const list = [];
+  const workerBase = CONFIG.sources.worker && CONFIG.sources.worker.baseUrl;
+  if (workerBase) {
+    list.push(`${workerBase.replace(/\/+$/, '')}/overlay/${key}`);
+  }
+  list.push(`https://api.allorigins.win/raw?url=${encodeURIComponent(upstreamUrl)}`);
+  list.push(`https://corsproxy.io/?url=${encodeURIComponent(upstreamUrl)}`);
+  list.push(upstreamUrl);
+  return list;
+}
+
+async function fetchJsonOverlay(key, upstreamUrl) {
+  const candidates = overlayCandidateUrls(key, upstreamUrl);
+  let lastErr = null;
+  for (const url of candidates) {
+    try {
+      const sep = url.includes('?') ? '&' : '?';
+      const res = await fetch(url + sep + '_ts=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const text = await res.text();
+      const cleaned = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+      const data = JSON.parse(cleaned);
+      if (!data || typeof data !== 'object') throw new Error('not an object');
+      return data;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr || new Error('overlay fetch failed: ' + key);
 }
 
 async function fetchOverlays() {
   const urls = CONFIG.sources.overlays || {};
-  const results = await Promise.allSettled([
-    urls.powerOutages ? fetchJsonOverlay(urls.powerOutages) : Promise.resolve(null),
-    urls.roadConditions ? fetchJsonOverlay(urls.roadConditions) : Promise.resolve(null),
-    urls.winterConditions ? fetchJsonOverlay(urls.winterConditions) : Promise.resolve(null),
-    urls.plannedEvents ? fetchJsonOverlay(urls.plannedEvents) : Promise.resolve(null)
-  ]);
+  const jobs = [
+    ['power', urls.powerOutages, normalizePowerOutages],
+    ['road', urls.roadConditions, normalizeRoadConditions],
+    ['winter', urls.winterConditions, normalizeWinterConditions],
+    ['events', urls.plannedEvents, normalizePlannedEvents]
+  ];
+
+  const results = await Promise.allSettled(
+    jobs.map(([key, upstream]) =>
+      upstream ? fetchJsonOverlay(key, upstream) : Promise.resolve(null)
+    )
+  );
 
   const items = [];
-  const [power, road, winter, events] = results;
-
-  if (power.status === 'fulfilled' && power.value) {
-    items.push(...normalizePowerOutages(power.value));
-  }
-  if (road.status === 'fulfilled' && road.value) {
-    items.push(...normalizeRoadConditions(road.value));
-  }
-  if (winter.status === 'fulfilled' && winter.value) {
-    items.push(...normalizeWinterConditions(winter.value));
-  }
-  if (events.status === 'fulfilled' && events.value) {
-    items.push(...normalizePlannedEvents(events.value));
-  }
+  results.forEach((result, i) => {
+    if (result.status !== 'fulfilled' || !result.value) {
+      if (result.status === 'rejected') {
+        console.warn('[montcoxplr] overlay failed:', jobs[i][0], result.reason);
+      }
+      return;
+    }
+    try {
+      items.push(...jobs[i][2](result.value));
+    } catch (err) {
+      console.warn('[montcoxplr] overlay normalize failed:', jobs[i][0], err);
+    }
+  });
   return items;
 }
 

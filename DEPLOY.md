@@ -66,6 +66,10 @@ Once deployed, visiting these in a browser should return raw feed data:
 - `https://montcoxplr-proxy.your-subdomain.workers.dev/oos`
 - `https://montcoxplr-proxy.your-subdomain.workers.dev/incidents` (WebCAD list HTML — eid/num index)
 - `https://montcoxplr-proxy.your-subdomain.workers.dev/units?eid=…&num=…` (units for one call)
+- `https://montcoxplr-proxy.your-subdomain.workers.dev/overlay/power` (power-outages.geojson)
+- `https://montcoxplr-proxy.your-subdomain.workers.dev/overlay/road` (road-conditions.geojson)
+- `https://montcoxplr-proxy.your-subdomain.workers.dev/overlay/winter` (winter-conditions.geojson)
+- `https://montcoxplr-proxy.your-subdomain.workers.dev/overlay/events` (planned-events.geojson)
 - `https://montcoxplr-proxy.your-subdomain.workers.dev/health` → `{"ok":true,...}`
 
 ## Changing the allowed origin
