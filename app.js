@@ -37,6 +37,12 @@ const CONFIG = {
   refreshIntervalMs: 60000,   // county CAD data itself only updates every 4-5 min
   clockUpdateMs: 1000,
   demoAfterFailedSources: true, // show clearly-labeled demo data if everything fails
+  // Fire / EMS / Traffic newer than this stay pinned at the top of the
+  // live feed column, newest first. After the window they fall into the
+  // normal category-priority list below.
+  feedPinMs: 5 * 60 * 1000, // 5 minutes
+  // Re-sort the feed (without refetching) so pinned items drop on time.
+  feedResortMs: 30 * 1000,
   // If the newest ArcGIS incident is older than this, treat the feed as
   // frozen and fall through to the live RSS CAD feed.
   staleMaxAgeMs: 45 * 60 * 1000, // 45 minutes
@@ -202,6 +208,7 @@ document.addEventListener('DOMContentLoaded', () => {
   refreshOos();
   setInterval(refreshAll, CONFIG.refreshIntervalMs);
   setInterval(refreshOos, CONFIG.refreshIntervalMs);
+  setInterval(resortFeedList, CONFIG.feedResortMs || 30000);
 });
 
 // ---------------------------------------------------------------------
@@ -1309,14 +1316,7 @@ async function refreshAll() {
 
   state.activeIncidentSource = activeSource;
 
-  // Feed order: Fire → EMS → Traffic first, then overlays / other.
-  // Within each category, newest first.
-  combined.sort((a, b) => {
-    const pa = categoryPriority(a.cat);
-    const pb = categoryPriority(b.cat);
-    if (pa !== pb) return pa - pb;
-    return (b._sortKey || 0) - (a._sortKey || 0);
-  });
+  combined.sort(compareFeedOrder);
 
   // Only diff against real (non-demo) data — otherwise an outage followed
   // by recovery would make every currently-active incident look "new"
@@ -1641,7 +1641,7 @@ function toSortKey(value) {
   return isNaN(d.getTime()) ? 0 : d.getTime();
 }
 
-// Lower number = higher in the live feed column.
+// Lower number = higher in the live feed column (after pin tier).
 function categoryPriority(cat) {
   switch (cat) {
     case 'fire': return 1;
@@ -1653,6 +1653,42 @@ function categoryPriority(cat) {
     case 'planned': return 7;
     default: return 8;
   }
+}
+
+// True for Fire/EMS/Traffic still inside the pin window (default 5 min).
+function isPinnedRecent(inc) {
+  if (!inc) return false;
+  if (inc.cat !== 'fire' && inc.cat !== 'ems' && inc.cat !== 'traffic') return false;
+  const t = inc._sortKey || 0;
+  if (!t) return false;
+  const pinMs = CONFIG.feedPinMs || 5 * 60 * 1000;
+  const age = Date.now() - t;
+  return age >= 0 && age < pinMs;
+}
+
+// Feed sort:
+//  1) Pinned recent Fire/EMS/Traffic at the very top (newest first)
+//  2) Everything else by category priority, then newest first
+function compareFeedOrder(a, b) {
+  const pinA = isPinnedRecent(a) ? 0 : 1;
+  const pinB = isPinnedRecent(b) ? 0 : 1;
+  if (pinA !== pinB) return pinA - pinB;
+  if (pinA === 0) {
+    // Within the pin band: pure recency so the newest call jumps to #1
+    return (b._sortKey || 0) - (a._sortKey || 0);
+  }
+  const pa = categoryPriority(a.cat);
+  const pb = categoryPriority(b.cat);
+  if (pa !== pb) return pa - pb;
+  return (b._sortKey || 0) - (a._sortKey || 0);
+}
+
+// Re-apply pin/priority order without refetching (lets pins expire on time).
+function resortFeedList() {
+  if (!state.incidents || state.incidents.length === 0) return;
+  state.incidents.sort(compareFeedOrder);
+  renderFeedList();
+  renderTicker();
 }
 
 function relativeTime(ms) {
