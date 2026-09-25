@@ -191,7 +191,70 @@ const state = {
   // Feed card currently expanded to show assigned units (toggle on click)
   expandedId: null,
   // Leaflet layer group for polygon/line overlays (outages, winter roads)
-  overlayLayer: null
+  overlayLayer: null,
+  baseLayer: null,
+  basemapId: 'dark'
+};
+
+// Free basemap styles (no API key). `invert` applies the dark CSS filter
+// used on plain OSM tiles so the console stays readable at night.
+const BASEMAPS = {
+  dark: {
+    label: 'Dark',
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    subdomains: 'abc',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom: 19,
+    invert: true
+  },
+  streets: {
+    label: 'Streets',
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    subdomains: 'abc',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom: 19,
+    invert: false
+  },
+  darkmatter: {
+    label: 'Dark Matter',
+    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    subdomains: 'abcd',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    maxZoom: 20,
+    invert: false
+  },
+  voyager: {
+    label: 'Voyager',
+    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    subdomains: 'abcd',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    maxZoom: 20,
+    invert: false
+  },
+  positron: {
+    label: 'Light',
+    url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    subdomains: 'abcd',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    maxZoom: 20,
+    invert: false
+  },
+  satellite: {
+    label: 'Satellite',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    subdomains: '',
+    attribution: 'Tiles &copy; Esri',
+    maxZoom: 19,
+    invert: false
+  },
+  topo: {
+    label: 'Topo',
+    url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+    subdomains: 'abc',
+    attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>, <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)',
+    maxZoom: 17,
+    invert: false
+  }
 };
 
 // ---------------------------------------------------------------------
@@ -386,32 +449,75 @@ function initMap() {
   // Reset View button instead (see .leaflet-top.leaflet-right CSS).
   L.control.zoom({ position: 'topright' }).addTo(m);
 
-  const primaryTiles = L.tileLayer(CONFIG.map.tileUrl, {
-    subdomains: CONFIG.map.tileSubdomains,
-    minZoom: CONFIG.map.minZoom,
-    maxZoom: CONFIG.map.maxZoom,
-    attribution: CONFIG.map.tileAttribution
-  });
-
-  // If the primary basemap ever fails to load tiles (network block, CDN
-  // outage), swap to the OSM fallback automatically rather than leaving
-  // the map blank.
-  let fallenBack = false;
-  primaryTiles.on('tileerror', () => {
-    if (fallenBack) return;
-    fallenBack = true;
-    m.removeLayer(primaryTiles);
-    L.tileLayer(CONFIG.map.fallbackTileUrl, {
-      subdomains: CONFIG.map.fallbackTileSubdomains,
-      minZoom: CONFIG.map.minZoom,
-      maxZoom: CONFIG.map.maxZoom,
-      attribution: CONFIG.map.fallbackTileAttribution
-    }).addTo(m);
-  });
-
-  primaryTiles.addTo(m);
-  state.overlayLayer = L.layerGroup().addTo(m);
   state.map = m;
+  state.overlayLayer = L.layerGroup().addTo(m);
+
+  // Restore last-chosen basemap (default: dark console OSM)
+  let saved = 'dark';
+  try {
+    saved = localStorage.getItem('montcoxplr_basemap') || 'dark';
+  } catch (err) { /* ignore */ }
+  if (!BASEMAPS[saved]) saved = 'dark';
+  setBasemap(saved, { silent: true });
+  initBasemapPicker();
+}
+
+function setBasemap(id, opts) {
+  const style = BASEMAPS[id] || BASEMAPS.dark;
+  if (!state.map) return;
+
+  if (state.baseLayer) {
+    state.map.removeLayer(state.baseLayer);
+    state.baseLayer = null;
+  }
+
+  const layerOpts = {
+    minZoom: CONFIG.map.minZoom,
+    maxZoom: style.maxZoom || CONFIG.map.maxZoom,
+    attribution: style.attribution
+  };
+  if (style.subdomains) layerOpts.subdomains = style.subdomains;
+
+  const layer = L.tileLayer(style.url, layerOpts);
+  layer.addTo(state.map);
+  // Keep overlays above the basemap
+  if (state.overlayLayer) state.overlayLayer.bringToFront();
+  state.baseLayer = layer;
+  state.basemapId = id;
+
+  // Dark console filter only for the inverted OSM style
+  const container = state.map.getContainer();
+  if (style.invert) container.classList.remove('basemap-natural');
+  else container.classList.add('basemap-natural');
+
+  try {
+    localStorage.setItem('montcoxplr_basemap', id);
+  } catch (err) { /* ignore */ }
+
+  const select = document.getElementById('basemap-select');
+  if (select && select.value !== id) select.value = id;
+
+  if (!opts || !opts.silent) {
+    // no-op toast; selection is enough feedback
+  }
+}
+
+function initBasemapPicker() {
+  const select = document.getElementById('basemap-select');
+  if (!select) return;
+  // Populate options if empty
+  if (!select.options.length) {
+    Object.keys(BASEMAPS).forEach((id) => {
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = BASEMAPS[id].label;
+      select.appendChild(opt);
+    });
+  }
+  select.value = state.basemapId || 'dark';
+  select.addEventListener('change', () => {
+    setBasemap(select.value);
+  });
 }
 
 function makeDivIcon(cat) {
