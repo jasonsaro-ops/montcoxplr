@@ -450,7 +450,14 @@ function initMap() {
   L.control.zoom({ position: 'topright' }).addTo(m);
 
   state.map = m;
-  state.overlayLayer = L.layerGroup().addTo(m);
+
+  // Dedicated pane above tile pane so outage polygons stay on top when
+  // the basemap is swapped (LayerGroup.bringToFront is not reliable here).
+  if (!m.getPane('overlays')) {
+    m.createPane('overlays');
+    m.getPane('overlays').style.zIndex = 450; // tiles ~200, markers ~600
+  }
+  state.overlayLayer = L.layerGroup([], { pane: 'overlays' }).addTo(m);
 
   // Restore last-chosen basemap (default: dark console OSM)
   let saved = 'dark';
@@ -479,9 +486,8 @@ function setBasemap(id, opts) {
   if (style.subdomains) layerOpts.subdomains = style.subdomains;
 
   const layer = L.tileLayer(style.url, layerOpts);
+  // Insert under overlay/marker panes
   layer.addTo(state.map);
-  // Keep overlays above the basemap
-  if (state.overlayLayer) state.overlayLayer.bringToFront();
   state.baseLayer = layer;
   state.basemapId = id;
 
@@ -496,10 +502,6 @@ function setBasemap(id, opts) {
 
   const select = document.getElementById('basemap-select');
   if (select && select.value !== id) select.value = id;
-
-  if (!opts || !opts.silent) {
-    // no-op toast; selection is enough feedback
-  }
 }
 
 function initBasemapPicker() {
@@ -550,7 +552,10 @@ function renderMarkers() {
     if (inc.geometry && state.overlayLayer) {
       try {
         const style = overlayStyleFor(inc);
-        const layer = L.geoJSON(inc.geometry, { style: () => style });
+        const layer = L.geoJSON(inc.geometry, {
+          style: () => style,
+          pane: 'overlays'
+        });
         layer.on('click', () => selectIncident(inc.id));
         layer.bindPopup(buildPopupHtml(inc));
         layer.addTo(state.overlayLayer);
