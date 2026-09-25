@@ -191,70 +191,7 @@ const state = {
   // Feed card currently expanded to show assigned units (toggle on click)
   expandedId: null,
   // Leaflet layer group for polygon/line overlays (outages, winter roads)
-  overlayLayer: null,
-  baseLayer: null,
-  basemapId: 'dark'
-};
-
-// Free basemap styles (no API key). `invert` applies the dark CSS filter
-// used on plain OSM tiles so the console stays readable at night.
-const BASEMAPS = {
-  dark: {
-    label: 'Dark',
-    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    subdomains: 'abc',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    maxZoom: 19,
-    invert: true
-  },
-  streets: {
-    label: 'Streets',
-    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    subdomains: 'abc',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    maxZoom: 19,
-    invert: false
-  },
-  darkgray: {
-    label: 'Dark Gray',
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
-    subdomains: '',
-    attribution: 'Tiles &copy; Esri',
-    maxZoom: 16,
-    invert: false
-  },
-  lightgray: {
-    label: 'Light Gray',
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
-    subdomains: '',
-    attribution: 'Tiles &copy; Esri',
-    maxZoom: 16,
-    invert: false
-  },
-  satellite: {
-    label: 'Satellite',
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    subdomains: '',
-    attribution: 'Tiles &copy; Esri',
-    maxZoom: 19,
-    invert: false
-  },
-  topo: {
-    label: 'Topo',
-    url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-    subdomains: 'abc',
-    attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>, <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)',
-    maxZoom: 17,
-    invert: false
-  },
-  humanitarian: {
-    label: 'Humanitarian',
-    url: 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
-    subdomains: 'abc',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, HOT style',
-    maxZoom: 19,
-    invert: false
-  }
+  overlayLayer: null
 };
 
 // ---------------------------------------------------------------------
@@ -444,95 +381,42 @@ function initMap() {
     attributionControl: true
   }).setView(CONFIG.map.center, CONFIG.map.zoom);
 
-  // Default zoom control sits top-left, right over the map badge and any
-  // incident pins in that corner. Moved to top-right, stacked under the
-  // Reset View button instead (see .leaflet-top.leaflet-right CSS).
+  // Zoom control top-right under Reset View (see CSS).
   L.control.zoom({ position: 'topright' }).addTo(m);
 
-  state.map = m;
+  // Dark console basemap: OSM tiles + CSS invert filter in index.html
+  const primaryTiles = L.tileLayer(CONFIG.map.tileUrl, {
+    subdomains: CONFIG.map.tileSubdomains,
+    minZoom: CONFIG.map.minZoom,
+    maxZoom: CONFIG.map.maxZoom,
+    attribution: CONFIG.map.tileAttribution
+  });
 
-  // Dedicated pane above tile pane so outage polygons stay on top when
-  // the basemap is swapped (LayerGroup.bringToFront is not reliable here).
+  let fallenBack = false;
+  primaryTiles.on('tileerror', () => {
+    if (fallenBack) return;
+    fallenBack = true;
+    m.removeLayer(primaryTiles);
+    L.tileLayer(CONFIG.map.fallbackTileUrl, {
+      subdomains: CONFIG.map.fallbackTileSubdomains,
+      minZoom: CONFIG.map.minZoom,
+      maxZoom: CONFIG.map.maxZoom,
+      attribution: CONFIG.map.fallbackTileAttribution
+    }).addTo(m);
+  });
+
+  primaryTiles.addTo(m);
+
+  // Overlay pane above tiles for outage polygons / 511 lines
   if (!m.getPane('overlays')) {
     m.createPane('overlays');
-    m.getPane('overlays').style.zIndex = 450; // tiles ~200, markers ~600
+    m.getPane('overlays').style.zIndex = 450;
   }
   state.overlayLayer = L.layerGroup([], { pane: 'overlays' }).addTo(m);
+  state.map = m;
 
-  // Default basemap is Dark (inverted OSM). Restore last valid choice if any;
-  // retired styles (e.g. old CARTO ids) fall back to dark and clear storage.
-  let saved = 'dark';
-  try {
-    saved = localStorage.getItem('montcoxplr_basemap') || 'dark';
-  } catch (err) { /* ignore */ }
-  if (!BASEMAPS[saved]) {
-    saved = 'dark';
-    try { localStorage.removeItem('montcoxplr_basemap'); } catch (err) { /* ignore */ }
-  }
-  setBasemap(saved, { silent: true });
-  initBasemapPicker();
-}
-
-function setBasemap(id, opts) {
-  const style = BASEMAPS[id] || BASEMAPS.dark;
-  if (!state.map) return;
-
-  if (state.baseLayer) {
-    state.map.removeLayer(state.baseLayer);
-    state.baseLayer = null;
-  }
-
-  const maxZ = style.maxZoom || CONFIG.map.maxZoom;
-  const minZ = CONFIG.map.minZoom;
-
-  const layerOpts = {
-    minZoom: minZ,
-    maxZoom: maxZ,
-    attribution: style.attribution
-  };
-  if (style.subdomains) layerOpts.subdomains = style.subdomains;
-
-  const layer = L.tileLayer(style.url, layerOpts);
-  layer.addTo(state.map);
-  state.baseLayer = layer;
-  state.basemapId = id;
-
-  // Keep map zoom controls within this style's supported range so you
-  // never end up on blank "zoom not supported" tiles.
-  state.map.setMaxZoom(maxZ);
-  state.map.setMinZoom(minZ);
-  const z = state.map.getZoom();
-  if (z > maxZ) state.map.setZoom(maxZ);
-  if (z < minZ) state.map.setZoom(minZ);
-
-  // Dark console filter only for the inverted OSM style
-  const container = state.map.getContainer();
-  if (style.invert) container.classList.remove('basemap-natural');
-  else container.classList.add('basemap-natural');
-
-  try {
-    localStorage.setItem('montcoxplr_basemap', id);
-  } catch (err) { /* ignore */ }
-
-  const select = document.getElementById('basemap-select');
-  if (select && select.value !== id) select.value = id;
-}
-
-function initBasemapPicker() {
-  const select = document.getElementById('basemap-select');
-  if (!select) return;
-  // Always rebuild from BASEMAPS so retired key-required styles disappear
-  select.innerHTML = '';
-  Object.keys(BASEMAPS).forEach((id) => {
-    const opt = document.createElement('option');
-    opt.value = id;
-    opt.textContent = BASEMAPS[id].label;
-    select.appendChild(opt);
-  });
-  select.value = state.basemapId || 'dark';
-  select.addEventListener('change', () => {
-    setBasemap(select.value);
-  });
+  // Drop any leftover style preference from the multi-basemap experiment
+  try { localStorage.removeItem('montcoxplr_basemap'); } catch (err) { /* ignore */ }
 }
 
 function makeDivIcon(cat) {
