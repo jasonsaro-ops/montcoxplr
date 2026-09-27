@@ -191,7 +191,9 @@ const state = {
   // Feed card currently expanded to show assigned units (toggle on click)
   expandedId: null,
   // Leaflet layer group for polygon/line overlays (outages, winter roads)
-  overlayLayer: null
+  overlayLayer: null,
+  // address|muni → {lat,lon} | null (Photon geocode cache)
+  geocodeCache: new Map()
 };
 
 // ---------------------------------------------------------------------
@@ -658,7 +660,7 @@ function normalizeArcgisFeature(feature, idx) {
 }
 
 // ---------------------------------------------------------------------
-// DATA FETCHING — WebCAD RSS (failover when ArcGIS is down or stale)
+// DATA FETCHING — WebCAD RSS (primary live CAD source from county site)
 // ---------------------------------------------------------------------
 async function fetchRss() {
   setSourceStatus('rss', 'connecting');
@@ -678,6 +680,69 @@ async function fetchRss() {
   }
   setSourceStatus('rss', 'down');
   return null;
+}
+
+// ---------------------------------------------------------------------
+// GEOCODING — Photon (OSM, no API key) for RSS addresses → map pins
+// County WebCAD RSS has no coordinates; ArcGIS FeatureServer is often
+// frozen. Photon is free and keyless for a public GitHub dashboard.
+// ---------------------------------------------------------------------
+async function geocodeAddress(address, municipality) {
+  if (!address || address === 'Address unavailable') return null;
+  const key = `${address}|${municipality || ''}`.toLowerCase().trim();
+  if (state.geocodeCache.has(key)) return state.geocodeCache.get(key);
+
+  // Normalize "A & B" intersections for the geocoder
+  const street = String(address).replace(/\s*&\s*/g, ' and ').replace(/\s+/g, ' ').trim();
+  const muni = (municipality || '').replace(/\s+COUNTY$/i, '').trim();
+  const q = [street, muni, 'Montgomery County', 'Pennsylvania', 'USA']
+    .filter(Boolean)
+    .join(', ');
+
+  try {
+    // Bias toward county centroid so we prefer Montco results
+    const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=1&lat=40.14&lon=-75.32`;
+    const res = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      cache: 'force-cache'
+    });
+    if (!res.ok) {
+      state.geocodeCache.set(key, null);
+      return null;
+    }
+    const data = await res.json();
+    const f = data && data.features && data.features[0];
+    if (f && f.geometry && Array.isArray(f.geometry.coordinates)) {
+      const [lon, lat] = f.geometry.coordinates;
+      // Rough Montgomery County / adjacent bounding box
+      if (lat > 39.85 && lat < 40.55 && lon > -75.85 && lon < -74.85) {
+        const result = { lat, lon };
+        state.geocodeCache.set(key, result);
+        return result;
+      }
+    }
+  } catch (err) {
+    console.warn('[montcoxplr] geocode failed', address, err);
+  }
+  state.geocodeCache.set(key, null);
+  return null;
+}
+
+async function geocodeIncidents(incidents) {
+  if (!incidents || !incidents.length) return incidents;
+  const need = incidents.filter(
+    (i) => i.lat == null && i.lon == null && (i.source === 'rss' || i.source === 'webcad')
+  );
+  // Sequential + short delay — be polite to the free geocoder
+  for (const inc of need) {
+    const geo = await geocodeAddress(inc.address, inc.municipality);
+    if (geo) {
+      inc.lat = geo.lat;
+      inc.lon = geo.lon;
+    }
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return incidents;
 }
 
 function parseRssFeed(xmlText) {
@@ -1289,7 +1354,6 @@ function normalizePlannedEvents(fc) {
 // REFRESH ORCHESTRATION
 // ---------------------------------------------------------------------
 async function refreshAll() {
-  setSourceStatus('arcgis', 'connecting');
   setRefreshCountdown();
 
   // Refresh eid↔incidentno index in parallel (used by the units panel).
@@ -1298,26 +1362,35 @@ async function refreshAll() {
   let combined = [];
   let activeSource = null;
 
-  // 1) Prefer live, non-stale ArcGIS (has coordinates for the map).
-  const arcgisIncidents = await fetchArcgis();
-  if (arcgisIncidents && arcgisIncidents.length) {
-    combined = arcgisIncidents;
-    activeSource = 'arcgis';
+  // 1) Primary: live WebCAD RSS from the county site (always current).
+  //    County ArcGIS FeatureServer often freezes on old incidents — do not
+  //    prefer it for the active list.
+  const rssIncidents = await fetchRss();
+  if (rssIncidents && rssIncidents.length) {
+    combined = rssIncidents;
+    activeSource = 'rss';
+    setSourceStatus('arcgis', 'down'); // not used as primary
   }
 
-  // 2) Fall back to live WebCAD RSS when ArcGIS is down or frozen.
+  // 2) Optional ArcGIS only if RSS is completely unavailable
   if (combined.length === 0) {
-    const rssIncidents = await fetchRss();
-    if (rssIncidents && rssIncidents.length) {
-      combined = rssIncidents;
-      activeSource = 'rss';
+    const arcgisIncidents = await fetchArcgis();
+    if (arcgisIncidents && arcgisIncidents.length) {
+      combined = arcgisIncidents;
+      activeSource = 'arcgis';
     }
-  } else {
-    // ArcGIS won — mark RSS idle rather than "connecting".
-    if (state.sourceStatus.rss === 'connecting') setSourceStatus('rss', 'down');
   }
 
-  // 3) Merge county overlays (outages + 511) — never block CAD if they fail.
+  // 3) Geocode RSS addresses so map pins + click-to-zoom work (no API key)
+  if (combined.length && activeSource === 'rss') {
+    try {
+      await geocodeIncidents(combined);
+    } catch (err) {
+      console.warn('[montcoxplr] geocode batch failed', err);
+    }
+  }
+
+  // 4) Merge county overlays (outages + 511) — never block CAD if they fail.
   try {
     const overlayItems = await fetchOverlays();
     if (overlayItems && overlayItems.length) {
@@ -1363,10 +1436,8 @@ async function refreshAll() {
     if (state.isDemo) {
       demoBanner.textContent = '⚠ Live feeds unreachable — showing sample data';
       demoBanner.classList.add('show');
-    } else if (activeSource === 'rss') {
-      demoBanner.textContent = '⚠ ArcGIS map feed stale/offline — using live WebCAD RSS (list only, no map pins)';
-      demoBanner.classList.add('show');
     } else {
+      // WebCAD is the normal path — no ArcGIS warning banner
       demoBanner.classList.remove('show');
     }
   }
@@ -1463,12 +1534,32 @@ function selectIncident(id) {
   state.expandedId = collapsing ? null : id;
   state.selectedId = collapsing ? null : id;
 
-  // Zoom / popup only when opening (not when collapsing)
-  if (!collapsing && inc.lat != null && inc.lon != null) {
-    state.map.flyTo([inc.lat, inc.lon], Math.max(state.map.getZoom(), 15), { animate: true, duration: 0.6 });
-    const marker = state.markers.get(inc.id);
-    if (marker) {
-      setTimeout(() => marker.openPopup(), 350);
+  // Zoom / popup when opening. Geocode on demand if pin not ready yet.
+  if (!collapsing) {
+    const zoomTo = (lat, lon) => {
+      if (!state.map || lat == null || lon == null) return;
+      state.map.flyTo([lat, lon], Math.max(state.map.getZoom(), 15), {
+        animate: true,
+        duration: 0.6
+      });
+      const marker = state.markers.get(inc.id);
+      if (marker) setTimeout(() => marker.openPopup(), 350);
+    };
+
+    if (inc.lat != null && inc.lon != null) {
+      zoomTo(inc.lat, inc.lon);
+    } else if (inc.address && inc.address !== 'Address unavailable') {
+      geocodeAddress(inc.address, inc.municipality).then((geo) => {
+        if (!geo) return;
+        // Still the selected/expanded card?
+        const current = state.incidents.find((i) => i.id === id);
+        if (!current) return;
+        current.lat = geo.lat;
+        current.lon = geo.lon;
+        renderMarkers();
+        renderFeedList();
+        if (state.selectedId === id) zoomTo(geo.lat, geo.lon);
+      });
     }
   }
 
@@ -1592,7 +1683,7 @@ setInterval(() => {
 
 const SOURCE_LABELS = {
   arcgis: 'CAD MAP FEED',
-  rss: 'WEB CAD RSS'
+  rss: 'WEBCAD LIVE'
 };
 
 function setSourceStatus(source, status) {
@@ -1615,7 +1706,7 @@ function setSourceStatus(source, status) {
     if (primaryLbl && state.activeIncidentSource) {
       const active = state.activeIncidentSource;
       const activeStatus = state.sourceStatus[active] || status;
-      const label = active === 'rss' ? 'WEB CAD RSS' : active === 'demo' ? 'DEMO DATA' : 'CAD MAP FEED';
+      const label = active === 'rss' ? 'WEBCAD LIVE' : active === 'demo' ? 'DEMO DATA' : 'CAD MAP FEED';
       const statusText = activeStatus === 'live' ? 'LIVE'
         : activeStatus === 'connecting' ? 'SYNCING' : 'OFFLINE';
       primaryLbl.textContent = `${label} · ${statusText}`;
