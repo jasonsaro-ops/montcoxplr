@@ -452,18 +452,27 @@ function initMap() {
   // Drop any leftover style preference from the multi-basemap experiment
   try { localStorage.removeItem('montcoxplr_basemap'); } catch (err) { /* ignore */ }
 
-  // Re-measure map after CSS grid settles, then lock to Montco PA
+  // One layout settle, then lock to Montco PA. Resize only invalidates size
+  // (does not jump the camera).
   const fixView = () => {
     if (!state.map) return;
     state.map.invalidateSize(false);
     state.map.setView(CONFIG.map.center, CONFIG.map.zoom, { animate: false });
   };
-  setTimeout(fixView, 50);
-  setTimeout(fixView, 250);
-  setTimeout(fixView, 800);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(fixView);
+  });
+  setTimeout(fixView, 300);
   window.addEventListener('resize', () => {
     if (!state.map) return;
+    const c = state.map.getCenter();
+    const z = state.map.getZoom();
     state.map.invalidateSize(false);
+    if (isInCountyRegion(c.lat, c.lng)) {
+      state.map.setView(c, z, { animate: false });
+    } else {
+      state.map.setView(CONFIG.map.center, CONFIG.map.zoom, { animate: false });
+    }
   });
 }
 
@@ -2050,21 +2059,51 @@ async function refreshAll() {
     }
   }
 
-  // Paint list + any known pins immediately
-  renderMarkers();
-  renderStats();
-  renderFeedList();
-  renderTicker();
-  updateBadge();
+  // Preserve map camera across data refresh (do NOT invalidateSize here —
+  // that was recentering the map on a broken layout mid-reflow).
+  let savedView = null;
   if (state.map) {
-    setTimeout(() => {
-      state.map.invalidateSize();
+    try {
       const c = state.map.getCenter();
-      if (!isInCountyRegion(c.lat, c.lng)) {
+      savedView = { lat: c.lat, lon: c.lng, zoom: state.map.getZoom() };
+    } catch (err) { /* ignore */ }
+  }
+
+  // Paint list + pins; isolate failures so a ticker/feed error cannot blank the UI
+  try { renderMarkers(); } catch (err) { console.warn('[montcoxplr] renderMarkers', err); }
+  try { renderStats(); } catch (err) { console.warn('[montcoxplr] renderStats', err); }
+  try { renderFeedList(); } catch (err) { console.warn('[montcoxplr] renderFeedList', err); }
+  try { renderTicker(); } catch (err) { console.warn('[montcoxplr] renderTicker', err); }
+  try { updateBadge(); } catch (err) { /* ignore */ }
+
+  if (state.map) {
+    try {
+      if (savedView && isInCountyRegion(savedView.lat, savedView.lon)) {
+        state.map.setView([savedView.lat, savedView.lon], savedView.zoom, { animate: false });
+      } else {
         state.map.setView(CONFIG.map.center, CONFIG.map.zoom, { animate: false });
       }
-    }, 50);
+    } catch (err) { /* ignore */ }
   }
+
+  // Re-assert layout after paint (guards against transient grid collapse)
+  requestAnimationFrame(() => {
+    const main = document.querySelector('main.grid');
+    const feed = document.querySelector('.feed-rail');
+    const stack = document.querySelector('.ticker-stack');
+    if (main && window.innerWidth > 980) {
+      main.style.gridTemplateColumns = '220px minmax(0, 1fr) 360px';
+      main.style.gridTemplateAreas = '"rail map feed"';
+    }
+    if (feed) {
+      feed.style.display = 'flex';
+      if (window.innerWidth > 980) {
+        feed.style.width = '360px';
+        feed.style.maxWidth = '360px';
+      }
+    }
+    if (stack) stack.style.display = 'flex';
+  });
 
   // 4) Geocode remaining RSS addresses in background (pins fill in progressively)
   if (activeSource === 'rss' || activeSource === 'webcad') {
@@ -2237,30 +2276,31 @@ function tickerItemHtml(i) {
 
 function fillTicker(el, items, emptyMsg) {
   if (!el) return;
-  // Reset animation so duration changes take effect
-  el.style.animation = 'none';
-  void el.offsetWidth;
 
-  if (!items || items.length === 0) {
+  const list = items || [];
+  const sig = list.length
+    ? list.map((i) => i.id).join('|')
+    : 'empty:' + emptyMsg;
+  // Skip DOM rebuild when nothing changed — prevents layout thrash on each refresh
+  if (el.dataset.sig === sig) return;
+  el.dataset.sig = sig;
+
+  if (list.length === 0) {
     el.innerHTML = `<span class="tk-empty">${emptyMsg}</span>`;
-    el.style.animation = '';
     el.style.animationDuration = '80s';
     return;
   }
-  // Duplicate content so the loop feels continuous at faster speeds
-  const html = items.map(tickerItemHtml).join('');
+  // Duplicate content so the loop feels continuous (-50% keyframes)
+  const html = list.map(tickerItemHtml).join('');
   el.innerHTML = html + html;
-  // Readable pace: ~8s per item, floor 60s (was too fast at 2.8s)
-  const duration = Math.max(60, items.length * 8);
-  el.style.animation = '';
-  el.style.animationDuration = `${duration}s`;
+  // Readable pace: ~8s per item, floor 60s
+  el.style.animationDuration = `${Math.max(60, list.length * 8)}s`;
   el.querySelectorAll('.tk-item[data-id]').forEach((node) => {
     const go = (e) => {
       e.preventDefault();
       e.stopPropagation();
       const id = node.getAttribute('data-id');
       if (!id) return;
-      // Ensure map is in county before zooming to a pin
       if (state.map) {
         const c = state.map.getCenter();
         if (!isInCountyRegion(c.lat, c.lng)) {
@@ -2284,7 +2324,7 @@ function renderTicker() {
   const roads = state.incidents.filter((i) => roadCats.has(i.cat)).slice(0, 30);
   const trains = state.incidents.filter((i) => i.cat === 'train').slice(0, 40);
   // Waze ticker lists alerts even when the map layer is off so the bar stays useful
-  const waze = state.incidents.filter((i) => i.cat === 'waze').slice(0, 40);
+  const waze = state.incidents.filter((i) => i.cat === 'waze').slice(0, 20);
 
   fillTicker(
     document.getElementById('ticker-content'),

@@ -198,19 +198,19 @@
   /* ============ MAIN GRID ============ */
   main.grid{
     grid-area: main;
-    display:grid;
-    grid-template-columns: 220px minmax(0, 1fr) 360px;
-    grid-template-rows: minmax(0, 1fr);
-    grid-template-areas: "rail map feed";
+    display:grid !important;
+    grid-template-columns: 220px minmax(0, 1fr) 360px !important;
+    grid-template-rows: minmax(0, 1fr) !important;
+    grid-template-areas: "rail map feed" !important;
     overflow:hidden;
     min-height: 0;
     width: 100%;
     max-width: 100%;
   }
   main.grid > *{
-    min-width: 0;
+    min-width: 0 !important;
     min-height: 0;
-    max-width: 100%;
+    overflow: hidden;
   }
 
   .rail{
@@ -603,15 +603,15 @@
 
   /* ============ FEED RAIL ============ */
   .feed-rail{
-    grid-area: feed;
+    grid-area: feed !important;
     background: var(--panel);
     border-left: 1px solid var(--line);
-    display:flex;
+    display:flex !important;
     flex-direction:column;
     overflow:hidden;
     min-width: 0;
-    width: 360px;
-    max-width: 360px;
+    width: 360px !important;
+    max-width: 360px !important;
     min-height: 0;
     z-index: 2;
   }
@@ -744,13 +744,15 @@
   /* ============ TICKER STACK (dispatch + 511 + waze) ============ */
   .ticker-stack{
     grid-area: tickers;
-    display:flex;
+    display:flex !important;
     flex-direction:column;
     border-top: 1px solid var(--line);
     background: var(--panel);
     width: 100%;
     max-width: 100%;
     overflow: hidden;
+    flex-shrink: 0;
+    z-index: 5;
   }
   .ticker-bar{
     background: var(--panel-raise);
@@ -785,22 +787,25 @@
     min-width: 0;
     overflow:hidden;
     position:relative;
-    display:flex;
-    align-items:center;
+    /* fixed height track — content is position:absolute so it CANNOT expand page */
+    height: 28px;
   }
   .ticker-content{
-    display:inline-flex;
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    display:flex;
     align-items:center;
     white-space:nowrap;
     width: max-content;
-    max-width: none;
     animation: ticker-scroll 90s linear infinite;
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--text-hi);
     padding-left: 0;
     will-change: transform;
-    /* IMPORTANT: do NOT use padding-left:100% — it expands the page width */
+    pointer-events: auto;
   }
   .ticker-content:hover{ animation-play-state: paused; }
   .ticker-content .tk-empty{
@@ -915,15 +920,15 @@
     .hdr-title .eyebrow{ display:none; }
 
     main.grid{
-      grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: auto minmax(280px, 1fr) minmax(220px, 38vh);
+      grid-template-columns: minmax(0, 1fr) !important;
+      grid-template-rows: auto minmax(280px, 1fr) minmax(220px, 38vh) !important;
       grid-template-areas:
         "rail"
         "map"
-        "feed";
+        "feed" !important;
     }
     .rail{ max-width: none; width: 100%; }
-    .feed-rail{ width: 100%; max-width: none; }
+    .feed-rail{ width: 100% !important; max-width: none !important; }
     .rail{
       display: flex;
       flex-direction: row;
