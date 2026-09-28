@@ -161,7 +161,7 @@ const COLORS = {
   winter: '#7ec8ff',
   planned: '#ff4d9a',
   train: '#00f0c8',   // standout teal for regional rail
-  waze: '#ff7a18',    // Waze orange
+  waze: '#b8ff2e',    // lime — contrasts with CAD/outage/511 colors
   other: '#9c7cf0'
 };
 
@@ -441,40 +441,41 @@ function markerGlyphSvg(cat) {
   const c = 'currentColor';
   switch (cat) {
     case 'fire': // simple fire truck
-      return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="${c}" d="M3 14h1.5l1-3h8l1.2 3H18v2h-1.2a1.8 1.8 0 0 1-3.6 0H9.8a1.8 1.8 0 0 1-3.6 0H4v-2zm3.2 3.2a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm8.6 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM6 10V7h3v3H6zm9.5-1.5L14 6h3.5l1.2 2.5H15.5z"/></svg>`;
+      return `<svg viewBox="0 0 24 24" width="8" height="8" aria-hidden="true"><path fill="${c}" d="M3 14h1.5l1-3h8l1.2 3H18v2h-1.2a1.8 1.8 0 0 1-3.6 0H9.8a1.8 1.8 0 0 1-3.6 0H4v-2zm3.2 3.2a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm8.6 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM6 10V7h3v3H6zm9.5-1.5L14 6h3.5l1.2 2.5H15.5z"/></svg>`;
     case 'ems': // ambulance
-      return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="${c}" d="M3 13h2l1.5-4h6L14 13h3v2h-1.1a1.7 1.7 0 0 1-3.4 0H9.5a1.7 1.7 0 0 1-3.4 0H4v-2zm3.2 3a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm8.6 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM11 6v2H9v2h2v2h2v-2h2V8h-2V6h-2z"/></svg>`;
+      return `<svg viewBox="0 0 24 24" width="8" height="8" aria-hidden="true"><path fill="${c}" d="M3 13h2l1.5-4h6L14 13h3v2h-1.1a1.7 1.7 0 0 1-3.4 0H9.5a1.7 1.7 0 0 1-3.4 0H4v-2zm3.2 3a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm8.6 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM11 6v2H9v2h2v2h2v-2h2V8h-2V6h-2z"/></svg>`;
     case 'traffic': // traffic cone
-      return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="${c}" d="M10.2 3h3.6l.6 2H9.6l.6-2zm-1.2 4h6l.9 3H8.1l.9-3zm-1.5 5h9l1.2 4H6.3l1.2-4zM4 19h16v2H4v-2z"/></svg>`;
+      return `<svg viewBox="0 0 24 24" width="8" height="8" aria-hidden="true"><path fill="${c}" d="M10.2 3h3.6l.6 2H9.6l.6-2zm-1.2 4h6l.9 3H8.1l.9-3zm-1.5 5h9l1.2 4H6.3l1.2-4zM4 19h16v2H4v-2z"/></svg>`;
     case 'road511':
     case 'planned':
     case 'winter': // Pennsylvania keystone
-      return `<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path fill="${c}" d="M12 2.5l7 3.2v5.6c0 4.4-2.9 8.4-7 10.2-4.1-1.8-7-5.8-7-10.2V5.7l7-3.2z"/></svg>`;
+      return `<svg viewBox="0 0 24 24" width="7" height="7" aria-hidden="true"><path fill="${c}" d="M12 2.5l7 3.2v5.6c0 4.4-2.9 8.4-7 10.2-4.1-1.8-7-5.8-7-10.2V5.7l7-3.2z"/></svg>`;
     case 'train': // train
-      return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="${c}" d="M7 4h10a3 3 0 0 1 3 3v8a2 2 0 0 1-2 2h-1l2 3h-2l-1.5-2h-5L8 20H6l2-3H7a2 2 0 0 1-2-2V7a3 3 0 0 1 3-3zm0 3v4h10V7H7zm2 7.5a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4zm6 0a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4z"/></svg>`;
+      return `<svg viewBox="0 0 24 24" width="8" height="8" aria-hidden="true"><path fill="${c}" d="M7 4h10a3 3 0 0 1 3 3v8a2 2 0 0 1-2 2h-1l2 3h-2l-1.5-2h-5L8 20H6l2-3H7a2 2 0 0 1-2-2V7a3 3 0 0 1 3-3zm0 3v4h10V7H7zm2 7.5a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4zm6 0a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4z"/></svg>`;
     case 'waze-closed': // do-not-enter
-      return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="${c}" stroke-width="2"/><rect x="6" y="10.5" width="12" height="3" rx="1" fill="${c}"/></svg>`;
+      return `<svg viewBox="0 0 24 24" width="8" height="8" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="${c}" stroke-width="2"/><rect x="6" y="10.5" width="7" height="7" rx="1" fill="${c}"/></svg>`;
     case 'waze-hazard': // warning triangle + !
-      return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="${c}" d="M12 3l10 18H2L12 3zm0 5.5a1 1 0 0 0-1 1v5a1 1 0 1 0 2 0v-5a1 1 0 0 0-1-1zm0 9.2a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4z"/></svg>`;
+      return `<svg viewBox="0 0 24 24" width="8" height="8" aria-hidden="true"><path fill="${c}" d="M12 3l10 18H2L12 3zm0 5.5a1 1 0 0 0-1 1v5a1 1 0 1 0 2 0v-5a1 1 0 0 0-1-1zm0 9.2a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4z"/></svg>`;
     case 'waze-accident': // crash-ish X in circle
-      return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="${c}" stroke-width="2"/><path stroke="${c}" stroke-width="2" stroke-linecap="round" d="M8 8l8 8M16 8l-8 8"/></svg>`;
+      return `<svg viewBox="0 0 24 24" width="8" height="8" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="${c}" stroke-width="2"/><path stroke="${c}" stroke-width="2" stroke-linecap="round" d="M8 8l8 8M16 8l-8 8"/></svg>`;
     case 'waze-police': // shield
-      return `<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path fill="${c}" d="M12 2l8 3v6c0 5-3.4 9.4-8 11-4.6-1.6-8-6-8-11V5l8-3z"/></svg>`;
+      return `<svg viewBox="0 0 24 24" width="7" height="7" aria-hidden="true"><path fill="${c}" d="M12 2l8 3v6c0 5-3.4 9.4-8 11-4.6-1.6-8-6-8-11V5l8-3z"/></svg>`;
     case 'waze-jam': // jam bars
-      return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="${c}" d="M4 7h16v3H4V7zm0 5h16v3H4v-3zm0 5h16v3H4v-3z"/></svg>`;
+      return `<svg viewBox="0 0 24 24" width="8" height="8" aria-hidden="true"><path fill="${c}" d="M4 7h16v3H4V7zm0 5h16v3H4v-3zm0 5h16v3H4v-3z"/></svg>`;
     case 'waze':
-      return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="${c}" d="M12 3l10 18H2L12 3zm0 5.5a1 1 0 0 0-1 1v5a1 1 0 1 0 2 0v-5a1 1 0 0 0-1-1zm0 9.2a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4z"/></svg>`;
+      return `<svg viewBox="0 0 24 24" width="8" height="8" aria-hidden="true"><path fill="${c}" d="M12 3l10 18H2L12 3zm0 5.5a1 1 0 0 0-1 1v5a1 1 0 1 0 2 0v-5a1 1 0 0 0-1-1zm0 9.2a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4z"/></svg>`;
     case 'outage': // lightning
-      return `<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path fill="${c}" d="M13 2L6 13h5l-1 9 8-12h-5l0-8z"/></svg>`;
+      return `<svg viewBox="0 0 24 24" width="7" height="7" aria-hidden="true"><path fill="${c}" d="M13 2L6 13h5l-1 9 8-12h-5l0-8z"/></svg>`;
     default:
-      return `<svg viewBox="0 0 24 24" width="10" height="10" aria-hidden="true"><circle cx="12" cy="12" r="5" fill="${c}"/></svg>`;
+      return `<svg viewBox="0 0 24 24" width="7" height="7" aria-hidden="true"><circle cx="12" cy="12" r="5" fill="${c}"/></svg>`;
   }
 }
 
 function makeDivIcon(cat, iconKey) {
   const color = COLORS[cat] || COLORS.other;
   const glyph = markerGlyphSvg(iconKey || cat);
-  const size = (cat === 'train' || cat === 'waze') ? 28 : 26;
+  // ~50% of previous size (was 26–28px)
+  const size = (cat === 'train' || cat === 'waze') ? 14 : 13;
   return L.divIcon({
     className: 'mx-marker-icon',
     html: `<div class="mx-marker" style="--mx:${color}">
