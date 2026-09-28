@@ -571,6 +571,84 @@ async function fetchArcgis() {
   return null;
 }
 
+
+// County map geometry index (WebCAD 911 Incidents map on gis.montcopa.org).
+// Used ONLY to attach lat/lon onto WebCAD list rows by incident number —
+// list/units still come from livecad-incidents.asp.
+async function fetchCadCoordIndex() {
+  const queryPath =
+    '/arcgis/rest/services/Hosted/Montgomery_County_Active_CAD_Incidents_View/FeatureServer/0/query'
+    + '?where=1%3D1&outFields=incidentno,lat,lon,location,mun&returnGeometry=true&outSR=4326&f=geojson';
+  const urls = [];
+  const workerBase = CONFIG.sources.worker && CONFIG.sources.worker.baseUrl;
+  if (workerBase) {
+    urls.push(`${workerBase.replace(/\/+$/, '')}/cadmap`);
+  }
+  urls.push('https://gis.montcopa.org' + queryPath);
+  for (const u of CONFIG.sources.arcgisCandidates || []) {
+    if (/Active_CAD_Incidents/i.test(u) || /gis\.montcopa\.org/i.test(u)) urls.push(u);
+  }
+
+  for (const url of urls) {
+    try {
+      const busted = url + (url.includes('?') ? '&' : '?') + '_ts=' + Date.now();
+      const res = await fetch(busted, { cache: 'no-store', mode: 'cors' });
+      if (!res.ok) continue;
+      const json = await res.json();
+      const features = json.features || [];
+      if (!features.length) continue;
+      const map = new Map();
+      for (const f of features) {
+        const props = f.properties || f.attributes || {};
+        const num = String(props.incidentno || props.IncidentNo || '').trim().toUpperCase();
+        if (!num) continue;
+        let lat = props.lat != null ? parseFloat(props.lat) : null;
+        let lon = props.lon != null ? parseFloat(props.lon) : null;
+        const g = f.geometry;
+        if ((lat == null || lon == null) && g) {
+          if (g.type === 'Point' && Array.isArray(g.coordinates)) {
+            lon = g.coordinates[0];
+            lat = g.coordinates[1];
+          } else if (g.x != null && g.y != null) {
+            lon = g.x;
+            lat = g.y;
+          }
+        }
+        if (lat != null && lon != null && !isNaN(lat) && !isNaN(lon)) {
+          map.set(num, { lat, lon });
+        }
+      }
+      if (map.size > 0) {
+        console.info('[montcoxplr] CAD map coords', map.size, 'from', url.slice(0, 80));
+        setSourceStatus('arcgis', 'live');
+        return map;
+      }
+    } catch (err) {
+      console.warn('[montcoxplr] CAD map coord fetch failed', err);
+      continue;
+    }
+  }
+  setSourceStatus('arcgis', 'down');
+  return new Map();
+}
+
+function applyCadCoords(incidents, coordMap) {
+  if (!incidents || !coordMap || !coordMap.size) return 0;
+  let n = 0;
+  for (const inc of incidents) {
+    if (inc.lat != null && inc.lon != null) continue;
+    const num = String(inc.incidentno || '').trim().toUpperCase();
+    if (!num) continue;
+    const c = coordMap.get(num);
+    if (c) {
+      inc.lat = c.lat;
+      inc.lon = c.lon;
+      n += 1;
+    }
+  }
+  return n;
+}
+
 function isIncidentSetStale(incidents) {
   if (!incidents || incidents.length === 0) return true;
   let newest = 0;
@@ -1637,7 +1715,7 @@ async function refreshAll() {
     }
   }
 
-  // 3) Last resort: ArcGIS FeatureServer (often stale)
+  // 3) Last resort list: ArcGIS FeatureServer if WebCAD HTML + RSS both fail
   if (combined.length === 0) {
     const arcgisIncidents = await fetchArcgis();
     if (arcgisIncidents && arcgisIncidents.length) {
@@ -1646,7 +1724,19 @@ async function refreshAll() {
     }
   }
 
-  // 3) Merge county overlays (outages + 511) — never block CAD if they fail.
+  // 3b) Attach map pins from county WebCAD 911 map FeatureServer (by incident #)
+  //     https://www.montgomerycountypa.gov/.../webcad-911-incidents
+  if (combined.length && activeSource !== 'arcgis') {
+    try {
+      const coordMap = await fetchCadCoordIndex();
+      const applied = applyCadCoords(combined, coordMap);
+      console.info('[montcoxplr] applied', applied, 'coords from county map feed');
+    } catch (err) {
+      console.warn('[montcoxplr] coord merge failed', err);
+    }
+  }
+
+  // 4) Merge county overlays (outages + 511) — never block CAD if they fail.
   try {
     const overlayItems = await fetchOverlays();
     if (overlayItems && overlayItems.length) {

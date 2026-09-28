@@ -63,6 +63,7 @@ export default {
             '/incidents',
             '/units',
             '/geocode',
+            '/cadmap',
             '/overlay/power',
             '/overlay/road',
             '/overlay/winter',
@@ -72,6 +73,13 @@ export default {
         200,
         env
       );
+    }
+
+    // County WebCAD 911 map geometry (FeatureServer) — pins for the dashboard
+    if (path === 'cadmap') {
+      const upstreamUrl =
+        'https://gis.montcopa.org/arcgis/rest/services/Hosted/Montgomery_County_Active_CAD_Incidents_View/FeatureServer/0/query?where=1%3D1&outFields=incidentno,lat,lon,location,mun,type,incidenttype,dispatched,station&returnGeometry=true&outSR=4326&f=geojson';
+      return proxyUpstream(upstreamUrl, 'application/geo+json; charset=utf-8', 60, env, ctx, url);
     }
 
     // Geocode proxy — Photon OSM (no API key), CORS-safe for the dashboard
