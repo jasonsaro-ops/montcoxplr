@@ -33,7 +33,9 @@ const OVERLAY_UPSTREAM = {
   power: 'https://gis.montcopa.org/opendata/data/power-outages.geojson',
   road: 'https://gis.montcopa.org/opendata/data/road-conditions.geojson',
   winter: 'https://gis.montcopa.org/opendata/data/winter-conditions.geojson',
-  events: 'https://gis.montcopa.org/opendata/data/planned-events.geojson'
+  events: 'https://gis.montcopa.org/opendata/data/planned-events.geojson',
+  trains:
+    'https://gis.montcopa.org/arcgis/rest/services/Hosted/Montco_SEPTA_Regional_Rail_View/FeatureServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson'
 };
 
 const CACHE_SECONDS = {
@@ -67,7 +69,8 @@ export default {
             '/overlay/power',
             '/overlay/road',
             '/overlay/winter',
-            '/overlay/events'
+            '/overlay/events',
+            '/overlay/trains'
           ]
         },
         200,

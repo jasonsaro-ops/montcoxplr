@@ -133,7 +133,9 @@ const CONFIG = {
       powerOutages: 'https://gis.montcopa.org/opendata/data/power-outages.geojson',
       roadConditions: 'https://gis.montcopa.org/opendata/data/road-conditions.geojson',
       winterConditions: 'https://gis.montcopa.org/opendata/data/winter-conditions.geojson',
-      plannedEvents: 'https://gis.montcopa.org/opendata/data/planned-events.geojson'
+      plannedEvents: 'https://gis.montcopa.org/opendata/data/planned-events.geojson',
+      // SEPTA Regional Rail positions (county Train View)
+      trains: 'https://gis.montcopa.org/arcgis/rest/services/Hosted/Montco_SEPTA_Regional_Rail_View/FeatureServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson'
     }
   }
 };
@@ -155,6 +157,7 @@ const COLORS = {
   road511: '#c44dff',
   winter: '#7ec8ff',
   planned: '#ff4d9a',
+  train: '#00f0c8',   // standout teal for regional rail
   other: '#9c7cf0'
 };
 
@@ -421,17 +424,42 @@ function initMap() {
   try { localStorage.removeItem('montcoxplr_basemap'); } catch (err) { /* ignore */ }
 }
 
+// Small SVG glyph per category (fire truck, ambulance, cone, keystone, train…)
+function markerGlyphSvg(cat) {
+  // 18×18 viewBox, white stroke/fill on transparent — drawn over colored disc
+  const c = 'currentColor';
+  switch (cat) {
+    case 'fire': // simple fire truck
+      return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="${c}" d="M3 14h1.5l1-3h8l1.2 3H18v2h-1.2a1.8 1.8 0 0 1-3.6 0H9.8a1.8 1.8 0 0 1-3.6 0H4v-2zm3.2 3.2a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm8.6 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM6 10V7h3v3H6zm9.5-1.5L14 6h3.5l1.2 2.5H15.5z"/></svg>`;
+    case 'ems': // ambulance
+      return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="${c}" d="M3 13h2l1.5-4h6L14 13h3v2h-1.1a1.7 1.7 0 0 1-3.4 0H9.5a1.7 1.7 0 0 1-3.4 0H4v-2zm3.2 3a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm8.6 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM11 6v2H9v2h2v2h2v-2h2V8h-2V6h-2z"/></svg>`;
+    case 'traffic': // traffic cone
+      return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="${c}" d="M10.2 3h3.6l.6 2H9.6l.6-2zm-1.2 4h6l.9 3H8.1l.9-3zm-1.5 5h9l1.2 4H6.3l1.2-4zM4 19h16v2H4v-2z"/></svg>`;
+    case 'road511':
+    case 'planned':
+    case 'winter': // Pennsylvania keystone
+      return `<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path fill="${c}" d="M12 2.5l7 3.2v5.6c0 4.4-2.9 8.4-7 10.2-4.1-1.8-7-5.8-7-10.2V5.7l7-3.2z"/></svg>`;
+    case 'train': // train
+      return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="${c}" d="M7 4h10a3 3 0 0 1 3 3v8a2 2 0 0 1-2 2h-1l2 3h-2l-1.5-2h-5L8 20H6l2-3H7a2 2 0 0 1-2-2V7a3 3 0 0 1 3-3zm0 3v4h10V7H7zm2 7.5a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4zm6 0a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4z"/></svg>`;
+    case 'outage': // lightning
+      return `<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path fill="${c}" d="M13 2L6 13h5l-1 9 8-12h-5l0-8z"/></svg>`;
+    default:
+      return `<svg viewBox="0 0 24 24" width="10" height="10" aria-hidden="true"><circle cx="12" cy="12" r="5" fill="${c}"/></svg>`;
+  }
+}
+
 function makeDivIcon(cat) {
   const color = COLORS[cat] || COLORS.other;
+  const glyph = markerGlyphSvg(cat);
+  const size = cat === 'train' ? 28 : 26;
   return L.divIcon({
-    className: '',
-    html: `<div class="pulse-marker">
-             <div class="ring" style="background:${color}"></div>
-             <div class="core" style="background:${color}"></div>
+    className: 'mx-marker-icon',
+    html: `<div class="mx-marker" style="--mx:${color}">
+             <span class="mx-marker-disc">${glyph}</span>
            </div>`,
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
-    popupAnchor: [0, -8]
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+    popupAnchor: [0, -size / 2]
   });
 }
 
@@ -1525,13 +1553,58 @@ async function fetchJsonOverlay(key, upstreamUrl) {
   throw lastErr || new Error('overlay fetch failed: ' + key);
 }
 
+function normalizeTrains(geojson) {
+  const features = (geojson && geojson.features) || [];
+  return features.map((f, idx) => {
+    const p = f.properties || {};
+    const g = f.geometry;
+    let lat = p.lat != null ? parseFloat(p.lat) : null;
+    let lon = p.lon != null ? parseFloat(p.lon) : null;
+    if ((lat == null || lon == null || isNaN(lat) || isNaN(lon)) && g && g.type === 'Point' && Array.isArray(g.coordinates)) {
+      lon = g.coordinates[0];
+      lat = g.coordinates[1];
+    }
+    if (lat == null || lon == null || isNaN(lat) || isNaN(lon)) return null;
+    const trainno = p.trainno != null ? String(p.trainno) : '';
+    const line = p.line || '';
+    const dest = p.dest || '';
+    const sourceStop = p.source || p.currentstop || '';
+    const next = p.nextstop || '';
+    const late = p.late != null ? Number(p.late) : 0;
+    const lateLabel = late > 0 ? `${late} MIN LATE` : 'ON TIME';
+    const track = p.track ? `Track ${p.track}` : '';
+    return {
+      id: `train-${trainno || idx}-${p.objectid || idx}`,
+      incidentno: trainno ? `TRAIN ${trainno}` : '',
+      type: late > 0 ? `REGIONAL RAIL · ${lateLabel}` : 'REGIONAL RAIL · ON TIME',
+      address: `${line}${dest ? ' → ' + dest : ''}`.trim() || 'Regional Rail',
+      municipality: sourceStop ? `At ${sourceStop}` : (next ? `Next: ${next}` : ''),
+      station: track,
+      dispatched: '',
+      description: [
+        next ? `Next stop: ${next}` : '',
+        late > 0 ? `${late} min late` : 'On time',
+        p.service || ''
+      ].filter(Boolean).join(' · '),
+      cat: 'train',
+      lat,
+      lon,
+      source: 'train',
+      _sortKey: p.updated_dt || Date.now(),
+      lateMinutes: late
+    };
+  }).filter(Boolean);
+}
+
+
 async function fetchOverlays() {
   const urls = CONFIG.sources.overlays || {};
   const jobs = [
     ['power', urls.powerOutages, normalizePowerOutages],
     ['road', urls.roadConditions, normalizeRoadConditions],
     ['winter', urls.winterConditions, normalizeWinterConditions],
-    ['events', urls.plannedEvents, normalizePlannedEvents]
+    ['events', urls.plannedEvents, normalizePlannedEvents],
+    ['trains', urls.trains, normalizeTrains]
   ];
 
   const results = await Promise.allSettled(
@@ -1823,7 +1896,7 @@ async function refreshAll() {
 function renderStats() {
   const counts = {
     fire: 0, ems: 0, traffic: 0,
-    outage: 0, road511: 0, winter: 0, planned: 0, other: 0
+    outage: 0, road511: 0, winter: 0, planned: 0, train: 0, other: 0
   };
   state.incidents.forEach((i) => { counts[i.cat] = (counts[i.cat] || 0) + 1; });
   const set = (id, n) => { const el = document.getElementById(id); if (el) el.textContent = n; };
@@ -1835,6 +1908,7 @@ function renderStats() {
   set('stat-road511', counts.road511);
   set('stat-winter', counts.winter);
   set('stat-planned', counts.planned);
+  set('stat-train', counts.train);
 }
 
 function renderFeedList() {
@@ -2136,6 +2210,7 @@ function categoryPriority(cat) {
     case 'outage': return 5;
     case 'winter': return 6;
     case 'planned': return 7;
+    case 'train': return 8;
     default: return 8;
   }
 }

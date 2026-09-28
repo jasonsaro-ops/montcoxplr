@@ -286,6 +286,7 @@
   .swatch.road511{ background: #c44dff; box-shadow:0 0 4px #c44dff; }
   .swatch.winter{ background: #7ec8ff; box-shadow:0 0 4px #7ec8ff; }
   .swatch.planned{ background: #ff4d9a; box-shadow:0 0 4px #ff4d9a; }
+  .swatch.train{ background:#00f0c8; }
   .swatch.other{ background: var(--other); box-shadow:0 0 4px var(--other); }
 
   .aux-block{
@@ -376,6 +377,22 @@
   #map{ width:100%; height:100%; background: var(--void); }
 
   /* Dark console basemap: invert OSM raster tiles */
+  /* Category icon markers on the map */
+  .mx-marker-icon{ background:transparent !important; border:0 !important; }
+  .mx-marker{
+    width:26px; height:26px;
+    display:flex; align-items:center; justify-content:center;
+    filter: drop-shadow(0 1px 3px rgba(0,0,0,0.65));
+  }
+  .mx-marker-disc{
+    width:24px; height:24px; border-radius:50%;
+    background: var(--mx, #9c7cf0);
+    border: 1.5px solid rgba(255,255,255,0.9);
+    display:flex; align-items:center; justify-content:center;
+    color:#0b121a;
+  }
+  .mx-marker-disc svg{ display:block; }
+
   .leaflet-tile-pane{
     filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.92) saturate(0.85);
   }
@@ -974,6 +991,10 @@
             <div class="n" id="stat-planned">0</div>
             <div class="label">Planned</div>
           </div>
+          <div class="stat-card" data-cat="train">
+            <div class="n" id="stat-train">0</div>
+            <div class="label">Train</div>
+          </div>
         </div>
       </div>
 
@@ -987,6 +1008,7 @@
           <div class="legend-row"><span class="swatch road511"></span><span>511 Road</span></div>
           <div class="legend-row"><span class="swatch winter"></span><span>Winter</span></div>
           <div class="legend-row"><span class="swatch planned"></span><span>Planned</span></div>
+          <div class="legend-row"><span class="swatch train"></span><span>Train</span></div>
           <div class="legend-row"><span class="swatch other"></span><span>Other</span></div>
         </div>
         <p style="font-size:9.5px; color:var(--text-dim); margin-top:4px; line-height:1.3;">
@@ -1029,6 +1051,7 @@
           <button class="filter-btn" data-filter="road511">511 Road</button>
           <button class="filter-btn" data-filter="winter">Winter</button>
           <button class="filter-btn" data-filter="planned">Planned</button>
+          <button class="filter-btn" data-filter="train">Train</button>
         </div>
         <div class="feed-filters unit-filters" title="Filter by assigned unit status (uses loaded unit data)">
           <span class="filter-group-label">Units</span>
