@@ -440,12 +440,19 @@ function initMap() {
   // Drop any leftover style preference from the multi-basemap experiment
   try { localStorage.removeItem('montcoxplr_basemap'); } catch (err) { /* ignore */ }
 
-  // Ensure correct center after layout paints (fixes empty map / wrong region)
-  setTimeout(() => {
+  // Re-measure map after CSS grid settles, then lock to Montco PA
+  const fixView = () => {
     if (!state.map) return;
-    state.map.invalidateSize();
+    state.map.invalidateSize(false);
     state.map.setView(CONFIG.map.center, CONFIG.map.zoom, { animate: false });
-  }, 100);
+  };
+  setTimeout(fixView, 50);
+  setTimeout(fixView, 250);
+  setTimeout(fixView, 800);
+  window.addEventListener('resize', () => {
+    if (!state.map) return;
+    state.map.invalidateSize(false);
+  });
 }
 
 // Small SVG glyph per category (fire truck, ambulance, cone, keystone, train…)
