@@ -62,6 +62,7 @@ export default {
             '/oos',
             '/incidents',
             '/units',
+            '/geocode',
             '/overlay/power',
             '/overlay/road',
             '/overlay/winter',
@@ -71,6 +72,18 @@ export default {
         200,
         env
       );
+    }
+
+    // Geocode proxy — Photon OSM (no API key), CORS-safe for the dashboard
+    if (path === 'geocode') {
+      const q = url.searchParams.get('q') || '';
+      if (!q.trim()) {
+        return json({ error: 'geocode requires q query param' }, 400, env);
+      }
+      const limit = url.searchParams.get('limit') || '3';
+      const photonUrl =
+        `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=${encodeURIComponent(limit)}&lat=40.14&lon=-75.32`;
+      return proxyUpstream(photonUrl, 'application/json; charset=utf-8', 86400, env, ctx, url);
     }
 
     // Overlay routes: /overlay/power | /overlay/road | ...
@@ -89,7 +102,7 @@ export default {
 
     if (!UPSTREAM[path]) {
       return json(
-        { error: 'Unknown route. Use /rss, /oos, /incidents, /units, or /overlay/*.' },
+        { error: 'Unknown route. Use /rss, /oos, /incidents, /units, /geocode, or /overlay/*.' },
         404,
         env
       );

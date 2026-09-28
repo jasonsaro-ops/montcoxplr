@@ -685,44 +685,112 @@ async function fetchRss() {
 // ---------------------------------------------------------------------
 // GEOCODING — Photon (OSM, no API key) for RSS addresses → map pins
 // County WebCAD RSS has no coordinates; ArcGIS FeatureServer is often
-// frozen. Photon is free and keyless for a public GitHub dashboard.
+// frozen. Photon is free and keyless. Worker /geocode is a CORS fallback.
 // ---------------------------------------------------------------------
+function loadGeocodeCacheFromStorage() {
+  try {
+    const raw = localStorage.getItem('montcoxplr_geocode_v1');
+    if (!raw) return;
+    const obj = JSON.parse(raw);
+    Object.keys(obj).forEach((k) => {
+      if (obj[k] && typeof obj[k].lat === 'number') state.geocodeCache.set(k, obj[k]);
+    });
+  } catch (err) { /* ignore */ }
+}
+
+function persistGeocodeCache() {
+  try {
+    const obj = {};
+    let n = 0;
+    state.geocodeCache.forEach((v, k) => {
+      if (v && n < 400) {
+        obj[k] = v;
+        n += 1;
+      }
+    });
+    localStorage.setItem('montcoxplr_geocode_v1', JSON.stringify(obj));
+  } catch (err) { /* ignore */ }
+}
+
+function buildGeocodeQueries(address, municipality) {
+  const street = String(address || '')
+    .replace(/\s*&\s*/g, ' and ')
+    .replace(/\bDEAD END\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  let muni = String(municipality || '').trim();
+  const isOtherCounty = /\bCOUNTY\b/i.test(muni);
+  if (isOtherCounty) muni = muni.replace(/\s+COUNTY$/i, ' County');
+  const queries = [];
+  if (street && muni) {
+    queries.push(`${street}, ${muni}, Pennsylvania, USA`);
+    if (!isOtherCounty) queries.push(`${street}, ${muni}, Montgomery County, Pennsylvania, USA`);
+  }
+  if (street) {
+    if (!isOtherCounty) queries.push(`${street}, Montgomery County, Pennsylvania, USA`);
+    queries.push(`${street}, Pennsylvania, USA`);
+  }
+  return [...new Set(queries.filter(Boolean))];
+}
+
+function inRegion(lat, lon) {
+  // Montgomery + adjacent counties (mutual aid)
+  return lat > 39.7 && lat < 40.7 && lon > -76.0 && lon < -74.7;
+}
+
+async function fetchPhoton(query) {
+  const paths = [];
+  const workerBase = CONFIG.sources.worker && CONFIG.sources.worker.baseUrl;
+  if (workerBase) {
+    paths.push(
+      `${workerBase.replace(/\/+$/, '')}/geocode?q=${encodeURIComponent(query)}&limit=1`
+    );
+  }
+  paths.push(
+    `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=3&lat=40.14&lon=-75.32`
+  );
+  paths.push(
+    `https://corsproxy.io/?url=${encodeURIComponent(
+      `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=3&lat=40.14&lon=-75.32`
+    )}`
+  );
+
+  for (const url of paths) {
+    try {
+      const res = await fetch(url, {
+        headers: { Accept: 'application/json' },
+        cache: 'no-store'
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const features = (data && data.features) || [];
+      for (const f of features) {
+        if (!f.geometry || !Array.isArray(f.geometry.coordinates)) continue;
+        const [lon, lat] = f.geometry.coordinates;
+        if (typeof lat === 'number' && typeof lon === 'number' && inRegion(lat, lon)) {
+          return { lat, lon };
+        }
+      }
+    } catch (err) {
+      continue;
+    }
+  }
+  return null;
+}
+
 async function geocodeAddress(address, municipality) {
   if (!address || address === 'Address unavailable') return null;
   const key = `${address}|${municipality || ''}`.toLowerCase().trim();
   if (state.geocodeCache.has(key)) return state.geocodeCache.get(key);
 
-  // Normalize "A & B" intersections for the geocoder
-  const street = String(address).replace(/\s*&\s*/g, ' and ').replace(/\s+/g, ' ').trim();
-  const muni = (municipality || '').replace(/\s+COUNTY$/i, '').trim();
-  const q = [street, muni, 'Montgomery County', 'Pennsylvania', 'USA']
-    .filter(Boolean)
-    .join(', ');
-
-  try {
-    // Bias toward county centroid so we prefer Montco results
-    const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=1&lat=40.14&lon=-75.32`;
-    const res = await fetch(url, {
-      headers: { Accept: 'application/json' },
-      cache: 'force-cache'
-    });
-    if (!res.ok) {
-      state.geocodeCache.set(key, null);
-      return null;
+  const queries = buildGeocodeQueries(address, municipality);
+  for (const q of queries) {
+    const result = await fetchPhoton(q);
+    if (result) {
+      state.geocodeCache.set(key, result);
+      persistGeocodeCache();
+      return result;
     }
-    const data = await res.json();
-    const f = data && data.features && data.features[0];
-    if (f && f.geometry && Array.isArray(f.geometry.coordinates)) {
-      const [lon, lat] = f.geometry.coordinates;
-      // Rough Montgomery County / adjacent bounding box
-      if (lat > 39.85 && lat < 40.55 && lon > -75.85 && lon < -74.85) {
-        const result = { lat, lon };
-        state.geocodeCache.set(key, result);
-        return result;
-      }
-    }
-  } catch (err) {
-    console.warn('[montcoxplr] geocode failed', address, err);
   }
   state.geocodeCache.set(key, null);
   return null;
@@ -730,19 +798,53 @@ async function geocodeAddress(address, municipality) {
 
 async function geocodeIncidents(incidents) {
   if (!incidents || !incidents.length) return incidents;
+  loadGeocodeCacheFromStorage();
+
+  // Apply cache hits immediately
+  for (const inc of incidents) {
+    if (inc.lat != null) continue;
+    if (inc.source !== 'rss' && inc.source !== 'webcad') continue;
+    const key = `${inc.address}|${inc.municipality || ''}`.toLowerCase().trim();
+    const cached = state.geocodeCache.get(key);
+    if (cached && cached.lat != null) {
+      inc.lat = cached.lat;
+      inc.lon = cached.lon;
+    }
+  }
+
   const need = incidents.filter(
     (i) => i.lat == null && i.lon == null && (i.source === 'rss' || i.source === 'webcad')
   );
-  // Sequential + short delay — be polite to the free geocoder
-  for (const inc of need) {
-    const geo = await geocodeAddress(inc.address, inc.municipality);
-    if (geo) {
-      inc.lat = geo.lat;
-      inc.lon = geo.lon;
-    }
-    await new Promise((r) => setTimeout(r, 150));
+  if (!need.length) return incidents;
+
+  // Parallel batches of 4 — faster, progressive pins on the map
+  const concurrency = 4;
+  for (let i = 0; i < need.length; i += concurrency) {
+    const batch = need.slice(i, i + concurrency);
+    await Promise.all(
+      batch.map(async (inc) => {
+        const geo = await geocodeAddress(inc.address, inc.municipality);
+        if (geo) {
+          const live = state.incidents.find((x) => x.id === inc.id) || inc;
+          live.lat = geo.lat;
+          live.lon = geo.lon;
+          inc.lat = geo.lat;
+          inc.lon = geo.lon;
+        }
+      })
+    );
+    renderMarkers();
+    renderFeedList();
+    updateBadge();
   }
   return incidents;
+}
+
+function updateBadge() {
+  const badgeCount = document.getElementById('badge-count');
+  if (!badgeCount) return;
+  const plotted = state.incidents.filter((i) => i.lat != null && i.lon != null).length;
+  badgeCount.textContent = String(plotted);
 }
 
 function parseRssFeed(xmlText) {
@@ -1381,16 +1483,7 @@ async function refreshAll() {
     }
   }
 
-  // 3) Geocode RSS addresses so map pins + click-to-zoom work (no API key)
-  if (combined.length && activeSource === 'rss') {
-    try {
-      await geocodeIncidents(combined);
-    } catch (err) {
-      console.warn('[montcoxplr] geocode batch failed', err);
-    }
-  }
-
-  // 4) Merge county overlays (outages + 511) — never block CAD if they fail.
+  // 3) Merge county overlays (outages + 511) — never block CAD if they fail.
   try {
     const overlayItems = await fetchOverlays();
     if (overlayItems && overlayItems.length) {
@@ -1410,18 +1503,28 @@ async function refreshAll() {
 
   state.activeIncidentSource = activeSource;
 
+  // Apply any cached geocodes before first paint
+  if (activeSource === 'rss') {
+    loadGeocodeCacheFromStorage();
+    for (const inc of combined) {
+      if (inc.lat != null || (inc.source !== 'rss' && inc.source !== 'webcad')) continue;
+      const key = `${inc.address}|${inc.municipality || ''}`.toLowerCase().trim();
+      const cached = state.geocodeCache.get(key);
+      if (cached && cached.lat != null) {
+        inc.lat = cached.lat;
+        inc.lon = cached.lon;
+      }
+    }
+  }
+
   combined.sort(compareFeedOrder);
 
-  // Only diff against real (non-demo) data — otherwise an outage followed
-  // by recovery would make every currently-active incident look "new"
-  // again just because demo/rss IDs briefly replaced them.
   if (!state.isDemo) {
     detectAndAlertNewIncidents(combined);
   }
 
   state.incidents = combined;
 
-  // Refresh the primary status chip now that activeIncidentSource is known.
   if (activeSource === 'arcgis' || activeSource === 'rss') {
     setSourceStatus(activeSource, 'live');
   } else if (activeSource === 'demo') {
@@ -1437,15 +1540,27 @@ async function refreshAll() {
       demoBanner.textContent = '⚠ Live feeds unreachable — showing sample data';
       demoBanner.classList.add('show');
     } else {
-      // WebCAD is the normal path — no ArcGIS warning banner
       demoBanner.classList.remove('show');
     }
   }
 
+  // Paint list + any known pins immediately
   renderMarkers();
   renderStats();
   renderFeedList();
   renderTicker();
+  updateBadge();
+
+  // 4) Geocode remaining RSS addresses in background (pins fill in progressively)
+  if (activeSource === 'rss') {
+    geocodeIncidents(state.incidents)
+      .then(() => {
+        renderMarkers();
+        renderFeedList();
+        updateBadge();
+      })
+      .catch((err) => console.warn('[montcoxplr] geocode batch failed', err));
+  }
 }
 
 // ---------------------------------------------------------------------
