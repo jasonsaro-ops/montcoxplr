@@ -743,6 +743,7 @@
   .ticker-bar.tk-dispatch .ticker-label{ background: var(--amber); }
   .ticker-bar.tk-511 .ticker-label{ background: #c44dff; color: #0b121a; }
   .ticker-bar.tk-waze .ticker-label{ background: #b8ff2e; color: #0b121a; }
+  .ticker-bar.tk-train .ticker-label{ background: #00f0c8; color: #0b121a; }
   .ticker-track{
     flex:1;
     overflow:hidden;
@@ -1145,6 +1146,14 @@
       <div class="ticker-track">
         <div class="ticker-content" id="ticker-511" data-ticker="511">
           <span>No active 511 events…</span>
+        </div>
+      </div>
+    </div>
+    <div class="ticker-bar tk-train">
+      <div class="ticker-label">TRAINS</div>
+      <div class="ticker-track">
+        <div class="ticker-content" id="ticker-train" data-ticker="train">
+          <span>No active regional rail…</span>
         </div>
       </div>
     </div>

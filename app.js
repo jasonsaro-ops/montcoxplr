@@ -2210,11 +2210,12 @@ function fillTicker(el, items, emptyMsg) {
 }
 
 function renderTicker() {
-  const dispatchCats = new Set(['fire', 'ems', 'traffic', 'train']);
+  const dispatchCats = new Set(['fire', 'ems', 'traffic']);
   const roadCats = new Set(['road511', 'winter', 'planned']);
 
   const dispatch = state.incidents.filter((i) => dispatchCats.has(i.cat)).slice(0, 30);
   const roads = state.incidents.filter((i) => roadCats.has(i.cat)).slice(0, 30);
+  const trains = state.incidents.filter((i) => i.cat === 'train').slice(0, 40);
   // Waze ticker lists alerts even when the map layer is off so the bar stays useful
   const waze = state.incidents.filter((i) => i.cat === 'waze').slice(0, 40);
 
@@ -2227,6 +2228,11 @@ function renderTicker() {
     document.getElementById('ticker-511'),
     roads,
     'No active 511 road / winter / planned events…'
+  );
+  fillTicker(
+    document.getElementById('ticker-train'),
+    trains,
+    'No active regional rail…'
   );
   fillTicker(
     document.getElementById('ticker-waze'),
