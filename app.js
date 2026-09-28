@@ -683,6 +683,111 @@ async function fetchRss() {
 }
 
 // ---------------------------------------------------------------------
+// DATA FETCHING — WebCAD HTML list (primary: has incident # + eid for units)
+// Same page the county site uses: livecad-incidents.asp
+// ---------------------------------------------------------------------
+async function fetchWebcadIncidents() {
+  setSourceStatus('rss', 'connecting');
+  for (const url of buildCandidateUrls('incidents')) {
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) continue;
+      const html = await res.text();
+      const { incidents, index } = parseWebcadIncidentsHtml(html);
+      if (incidents.length > 0) {
+        // Keep eid index fresh for unit lookups
+        if (index.size) state.incidentEidByNum = index;
+        setSourceStatus('rss', 'live');
+        return incidents;
+      }
+    } catch (err) {
+      continue;
+    }
+  }
+  setSourceStatus('rss', 'down');
+  return null;
+}
+
+function decodeHtmlEntities(s) {
+  return String(s || '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ');
+}
+
+function parseWebcadIncidentsHtml(html) {
+  const incidents = [];
+  const index = new Map();
+  // data-eid / data-num may appear in either order
+  const btnRe = /<button[^>]*class=['"]inc['"][^>]*>([\s\S]*?)<\/button>/gi;
+  let m;
+  let idx = 0;
+  while ((m = btnRe.exec(html)) !== null) {
+    const full = m[0];
+    const inner = m[1];
+    const eidM = full.match(/data-eid=['"](\d+)['"]/i);
+    const numM = full.match(/data-num=['"]([^'"]+)['"]/i);
+    const catM = full.match(/data-cat=['"]([^'"]+)['"]/i);
+    if (!eidM || !numM) continue;
+    const eid = eidM[1];
+    const num = String(numM[1]).trim().toUpperCase();
+    const rawCat = (catM && catM[1]) || '';
+    const typeM = inner.match(/class=['"]inc-type['"][^>]*>([^<]+)/i);
+    const locM = inner.match(/class=['"]inc-loc['"][^>]*>([^<]+)/i);
+    const metaSpans = [...inner.matchAll(/class=['"]inc-meta['"][^>]*>([\s\S]*?)<\/span>/i)];
+    let municipality = '';
+    let station = '';
+    let dispatched = '';
+    // meta is one wrapper with inner <span>s
+    const metaBlock = inner.match(/class=['"]inc-meta['"][^>]*>([\s\S]*?)<\/span>\s*<\/button>|class=['"]inc-meta['"][^>]*>([\s\S]*?)$/i);
+    // Simpler: all spans inside inc-meta
+    const metaInner = inner.match(/class=['"]inc-meta['"][^>]*>([\s\S]*)/i);
+    if (metaInner) {
+      const spans = [...metaInner[1].matchAll(/<span[^>]*>([^<]*)<\/span>/gi)].map((x) => decodeHtmlEntities(x[1]).trim());
+      for (const s of spans) {
+        if (/^station\b/i.test(s)) station = s.replace(/^station\s*/i, '').trim();
+        else if (/dispatched/i.test(s)) {
+          const tm = s.match(/(\d{4}-\d{2}-\d{2}\s*@\s*\d{1,2}:\d{2}:\d{2})/);
+          if (tm) dispatched = tm[1];
+          else dispatched = s.replace(/^dispatched\s*/i, '').trim();
+        } else if (s && !municipality) municipality = s;
+      }
+    }
+    const nature = decodeHtmlEntities(typeM ? typeM[1] : 'INCIDENT').trim().toUpperCase();
+    const address = decodeHtmlEntities(locM ? locM[1] : '').trim() || 'Address unavailable';
+    index.set(num, { eid, num });
+    incidents.push({
+      id: `webcad-${num}`,
+      incidentno: num,
+      eid,
+      type: nature,
+      address,
+      municipality,
+      station,
+      dispatched: formatMaybeDate(dispatched),
+      description: '',
+      cat: classifyIncident(rawCat, `${nature} ${rawCat}`),
+      lat: null,
+      lon: null,
+      source: 'rss',
+      _sortKey: toSortKey(dispatched) || Date.now()
+    });
+    idx += 1;
+  }
+  // Also populate index via attribute-only scan as backup
+  const re = /data-eid=['"](\d+)['"]\s+data-num=['"]([^'"]+)['"]/gi;
+  while ((m = re.exec(html)) !== null) {
+    const eid = m[1];
+    const num = String(m[2]).trim().toUpperCase();
+    if (eid && num && !index.has(num)) index.set(num, { eid, num });
+  }
+  return { incidents, index };
+}
+
+// ---------------------------------------------------------------------
 // GEOCODING — Photon (OSM, no API key) for RSS addresses → map pins
 // County WebCAD RSS has no coordinates; ArcGIS FeatureServer is often
 // frozen. Photon is free and keyless. Worker /geocode is a CORS fallback.
@@ -713,18 +818,38 @@ function persistGeocodeCache() {
 }
 
 function buildGeocodeQueries(address, municipality) {
-  const street = String(address || '')
+  let street = String(address || '')
     .replace(/\s*&\s*/g, ' and ')
     .replace(/\bDEAD END\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
+  // Expand common CAD abbreviations so Photon can resolve more pins
+  street = street
+    .replace(/\bLN\b/gi, 'Lane')
+    .replace(/\bRD\b/gi, 'Road')
+    .replace(/\bST\b/gi, 'Street')
+    .replace(/\bAVE\b/gi, 'Avenue')
+    .replace(/\bDR\b/gi, 'Drive')
+    .replace(/\bCT\b/gi, 'Court')
+    .replace(/\bCIR\b/gi, 'Circle')
+    .replace(/\bBLVD\b/gi, 'Boulevard')
+    .replace(/\bPKWY\b/gi, 'Parkway')
+    .replace(/\bHWY\b/gi, 'Highway')
+    .replace(/\bPIKE\b/gi, 'Pike')
+    .replace(/\bPL\b/gi, 'Place')
+    .replace(/\bTER\b/gi, 'Terrace')
+    .replace(/\bRAMP\b/gi, 'Ramp');
   let muni = String(municipality || '').trim();
   const isOtherCounty = /\bCOUNTY\b/i.test(muni);
   if (isOtherCounty) muni = muni.replace(/\s+COUNTY$/i, ' County');
   const queries = [];
   if (street && muni) {
     queries.push(`${street}, ${muni}, Pennsylvania, USA`);
-    if (!isOtherCounty) queries.push(`${street}, ${muni}, Montgomery County, Pennsylvania, USA`);
+    if (!isOtherCounty) {
+      queries.push(`${street}, ${muni}, Montgomery County, Pennsylvania, USA`);
+      queries.push(`${street}, ${muni} Township, Montgomery County, Pennsylvania, USA`);
+      queries.push(`${street}, ${muni} Borough, Montgomery County, Pennsylvania, USA`);
+    }
   }
   if (street) {
     if (!isOtherCounty) queries.push(`${street}, Montgomery County, Pennsylvania, USA`);
@@ -1080,16 +1205,20 @@ function parseIncidentIndexHtml(html) {
 // ---------------------------------------------------------------------
 // DATA FETCHING — units assigned to one incident (lazy, on click)
 // ---------------------------------------------------------------------
-async function fetchUnitsForIncident(incidentno) {
+async function fetchUnitsForIncident(incidentno, eidHint) {
   const num = String(incidentno || '').trim().toUpperCase();
   if (!num) return { status: 'error', units: [] };
 
-  const meta = state.incidentEidByNum.get(num);
-  if (!meta || !meta.eid) {
-    // Index may be stale — try refreshing once
-    await fetchIncidentIndex();
+  let resolved = null;
+  if (eidHint) {
+    resolved = { eid: String(eidHint), num };
+  } else {
+    const meta = state.incidentEidByNum.get(num);
+    if (!meta || !meta.eid) {
+      await fetchIncidentIndex();
+    }
+    resolved = state.incidentEidByNum.get(num) || null;
   }
-  const resolved = state.incidentEidByNum.get(num);
   if (!resolved || !resolved.eid) {
     return { status: 'error', units: [], message: 'Incident not found in WebCAD unit index' };
   }
@@ -1165,7 +1294,7 @@ async function loadAndRenderUnits(inc, unitsEl) {
   unitsEl.innerHTML = `<div class="card-units-loading">Loading assigned units…</div>`;
   state.unitsCache.set(num, { status: 'loading', units: [], fetchedAt: Date.now() });
 
-  const result = await fetchUnitsForIncident(num);
+  const result = await fetchUnitsForIncident(num, inc.eid);
   // Ignore if this card is no longer the expanded one
   if (state.expandedId !== inc.id) return;
 
@@ -1464,17 +1593,25 @@ async function refreshAll() {
   let combined = [];
   let activeSource = null;
 
-  // 1) Primary: live WebCAD RSS from the county site (always current).
-  //    County ArcGIS FeatureServer often freezes on old incidents — do not
-  //    prefer it for the active list.
-  const rssIncidents = await fetchRss();
-  if (rssIncidents && rssIncidents.length) {
-    combined = rssIncidents;
+  // 1) Primary: WebCAD HTML list (incident # + eid → units work).
+  //    Same source as montgomerycountypa.gov WebCAD Active Incidents.
+  const webcadIncidents = await fetchWebcadIncidents();
+  if (webcadIncidents && webcadIncidents.length) {
+    combined = webcadIncidents;
     activeSource = 'rss';
-    setSourceStatus('arcgis', 'down'); // not used as primary
+    setSourceStatus('arcgis', 'down');
   }
 
-  // 2) Optional ArcGIS only if RSS is completely unavailable
+  // 2) Fallback: RSS (no incident numbers → units unavailable)
+  if (combined.length === 0) {
+    const rssIncidents = await fetchRss();
+    if (rssIncidents && rssIncidents.length) {
+      combined = rssIncidents;
+      activeSource = 'rss';
+    }
+  }
+
+  // 3) Last resort: ArcGIS FeatureServer (often stale)
   if (combined.length === 0) {
     const arcgisIncidents = await fetchArcgis();
     if (arcgisIncidents && arcgisIncidents.length) {
