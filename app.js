@@ -2109,6 +2109,16 @@ function selectIncident(id) {
   const inc = state.incidents.find((i) => i.id === id);
   if (!inc) return;
 
+  // Ticker click on Waze → turn the layer on so the pin is visible
+  if (inc.cat === 'waze' && state.layerToggles && !state.layerToggles.waze) {
+    state.layerToggles.waze = true;
+    const btn = document.getElementById('toggle-waze');
+    if (btn) {
+      btn.classList.add('active');
+      btn.setAttribute('aria-pressed', 'true');
+    }
+  }
+
   // Toggle expand in the feed list: click again collapses.
   const collapsing = state.expandedId === id;
   state.expandedId = collapsing ? null : id;
@@ -2154,23 +2164,75 @@ function selectIncident(id) {
   }
 }
 
-function renderTicker() {
-  const el = document.getElementById('ticker-content');
-  if (state.incidents.length === 0) {
-    el.innerHTML = '<span>No active incidents reported.</span>';
-    el.style.animationDuration = '40s';
+function tickerClassFor(cat) {
+  if (cat === 'fire') return 'tk-fire';
+  if (cat === 'ems') return 'tk-ems';
+  if (cat === 'traffic') return 'tk-traffic';
+  if (cat === 'road511') return 'tk-road511';
+  if (cat === 'winter') return 'tk-winter';
+  if (cat === 'planned') return 'tk-planned';
+  if (cat === 'waze') return 'tk-waze';
+  if (cat === 'train') return 'tk-train';
+  return '';
+}
+
+function tickerItemHtml(i) {
+  const cls = tickerClassFor(i.cat);
+  const loc = `${i.address || ''}${i.municipality ? ', ' + i.municipality : ''}`;
+  return `<span class="tk-item ${cls}" data-id="${escapeHtml(i.id)}" role="button" tabindex="0" title="Zoom to on map">● ${escapeHtml(i.type)} — ${escapeHtml(loc)}</span>`;
+}
+
+function fillTicker(el, items, emptyMsg) {
+  if (!el) return;
+  if (!items || items.length === 0) {
+    el.innerHTML = `<span>${emptyMsg}</span>`;
+    el.style.animationDuration = '20s';
     return;
   }
-  const items = state.incidents.slice(0, 25);
-  el.innerHTML = items.map((i) => {
-    const cls = i.cat === 'fire' ? 'tk-fire' : i.cat === 'ems' ? 'tk-ems' : i.cat === 'traffic' ? 'tk-traffic' : '';
-    return `<span class="${cls}">● ${escapeHtml(i.type)} — ${escapeHtml(i.address)}${i.municipality ? ', ' + escapeHtml(i.municipality) : ''}</span>`;
-  }).join('');
-
-  // Slow, unhurried pace: roughly 9s of scroll per item, floor of 90s so
-  // it never feels rushed even with just one or two incidents.
-  const duration = Math.max(90, items.length * 9);
+  // Duplicate content so the loop feels continuous at faster speeds
+  const html = items.map(tickerItemHtml).join('');
+  el.innerHTML = html + html;
+  // Faster scroll: ~3.2s per item, floor 18s
+  const duration = Math.max(18, items.length * 3.2);
   el.style.animationDuration = `${duration}s`;
+  el.querySelectorAll('.tk-item[data-id]').forEach((node) => {
+    const go = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const id = node.getAttribute('data-id');
+      if (id) selectIncident(id);
+    };
+    node.addEventListener('click', go);
+    node.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') go(e);
+    });
+  });
+}
+
+function renderTicker() {
+  const dispatchCats = new Set(['fire', 'ems', 'traffic', 'train']);
+  const roadCats = new Set(['road511', 'winter', 'planned']);
+
+  const dispatch = state.incidents.filter((i) => dispatchCats.has(i.cat)).slice(0, 30);
+  const roads = state.incidents.filter((i) => roadCats.has(i.cat)).slice(0, 30);
+  // Waze ticker lists alerts even when the map layer is off so the bar stays useful
+  const waze = state.incidents.filter((i) => i.cat === 'waze').slice(0, 40);
+
+  fillTicker(
+    document.getElementById('ticker-content'),
+    dispatch,
+    'No active fire / EMS / traffic incidents…'
+  );
+  fillTicker(
+    document.getElementById('ticker-511'),
+    roads,
+    'No active 511 road / winter / planned events…'
+  );
+  fillTicker(
+    document.getElementById('ticker-waze'),
+    waze,
+    'No Waze alerts right now…'
+  );
 }
 
 // ---------------------------------------------------------------------

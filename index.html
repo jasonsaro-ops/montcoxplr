@@ -91,7 +91,7 @@
     height:100vh;
     display:grid;
     grid-template-rows: auto 1fr auto;
-    grid-template-areas: "header" "main" "ticker";
+    grid-template-areas: "header" "main" "tickers";
   }
 
   /* ============ HEADER ============ */
@@ -710,28 +710,39 @@
     letter-spacing:1px;
   }
 
-  /* ============ TICKER ============ */
+  /* ============ TICKER STACK (dispatch + 511 + waze) ============ */
+  .ticker-stack{
+    grid-area: tickers;
+    display:flex;
+    flex-direction:column;
+    border-top: 1px solid var(--line);
+    background: var(--panel);
+  }
   .ticker-bar{
-    grid-area: ticker;
     background: var(--panel-raise);
     border-top: 1px solid var(--line);
     display:flex;
     align-items:stretch;
-    height: 32px;
+    height: 28px;
     overflow:hidden;
   }
+  .ticker-stack .ticker-bar:first-child{ border-top: 0; }
   .ticker-label{
-    background: var(--amber);
     color: var(--void);
     font-family: var(--font-mono);
     font-weight:700;
-    font-size: 10.5px;
-    letter-spacing: 1.5px;
+    font-size: 10px;
+    letter-spacing: 1.2px;
     display:flex;
     align-items:center;
-    padding: 0 12px;
+    padding: 0 10px;
     flex-shrink:0;
+    min-width: 7.5rem;
+    justify-content:center;
   }
+  .ticker-bar.tk-dispatch .ticker-label{ background: var(--amber); }
+  .ticker-bar.tk-511 .ticker-label{ background: #c44dff; color: #0b121a; }
+  .ticker-bar.tk-waze .ticker-label{ background: #b8ff2e; color: #0b121a; }
   .ticker-track{
     flex:1;
     overflow:hidden;
@@ -742,16 +753,31 @@
   .ticker-content{
     display:inline-flex;
     white-space:nowrap;
-    animation: ticker-scroll 130s linear infinite;
+    animation: ticker-scroll 40s linear infinite;
     font-family: var(--font-mono);
-    font-size: 11.5px;
+    font-size: 11px;
     color: var(--text-mid);
     padding-left:100%;
   }
-  .ticker-content span{ margin-right: 48px; }
+  .ticker-content:hover{ animation-play-state: paused; }
+  .ticker-content .tk-item{
+    margin-right: 36px;
+    cursor: pointer;
+    transition: color 0.12s, opacity 0.12s;
+  }
+  .ticker-content .tk-item:hover{
+    color: var(--text);
+    text-decoration: underline;
+    opacity: 1;
+  }
   .ticker-content .tk-fire{ color: var(--fire); }
   .ticker-content .tk-ems{ color: var(--ems); }
   .ticker-content .tk-traffic{ color: var(--traffic); }
+  .ticker-content .tk-road511{ color: #c44dff; }
+  .ticker-content .tk-winter{ color: #7ec8ff; }
+  .ticker-content .tk-planned{ color: #ff4d9a; }
+  .ticker-content .tk-waze{ color: #b8ff2e; }
+  .ticker-content .tk-train{ color: #00f0c8; }
   @keyframes ticker-scroll{ from{ transform: translateX(0);} to{ transform: translateX(-100%);} }
 
   @media (prefers-reduced-motion: reduce){
@@ -1105,11 +1131,29 @@
 
   </main>
 
-  <div class="ticker-bar">
-    <div class="ticker-label">LIVE DISPATCH</div>
-    <div class="ticker-track">
-      <div class="ticker-content" id="ticker-content">
-        <span>Awaiting incident data…</span>
+  <div class="ticker-stack">
+    <div class="ticker-bar tk-dispatch">
+      <div class="ticker-label">LIVE DISPATCH</div>
+      <div class="ticker-track">
+        <div class="ticker-content" id="ticker-content" data-ticker="dispatch">
+          <span>Awaiting incident data…</span>
+        </div>
+      </div>
+    </div>
+    <div class="ticker-bar tk-511">
+      <div class="ticker-label">511 / ROADS</div>
+      <div class="ticker-track">
+        <div class="ticker-content" id="ticker-511" data-ticker="511">
+          <span>No active 511 events…</span>
+        </div>
+      </div>
+    </div>
+    <div class="ticker-bar tk-waze">
+      <div class="ticker-label">WAZE</div>
+      <div class="ticker-track">
+        <div class="ticker-content" id="ticker-waze" data-ticker="waze">
+          <span>Waze layer off — enable to list alerts…</span>
+        </div>
       </div>
     </div>
   </div>
