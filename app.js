@@ -396,6 +396,18 @@ function updateAudioToggleUI() {
 // MAP
 // ---------------------------------------------------------------------
 function initMap() {
+  const mapEl = document.getElementById('map');
+  const wrap = document.querySelector('.map-wrap');
+  if (wrap) {
+    wrap.style.minWidth = '0';
+    wrap.style.maxWidth = '100%';
+    wrap.style.overflow = 'hidden';
+  }
+  if (mapEl) {
+    mapEl.style.width = '100%';
+    mapEl.style.height = '100%';
+  }
+
   const m = L.map('map', {
     zoomControl: false,
     attributionControl: true,

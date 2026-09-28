@@ -200,11 +200,16 @@
     grid-area: main;
     display:grid;
     grid-template-columns: 220px minmax(0, 1fr) 360px;
-    grid-template-rows: 1fr;
+    grid-template-rows: minmax(0, 1fr);
     grid-template-areas: "rail map feed";
     overflow:hidden;
     min-height: 0;
     width: 100%;
+    max-width: 100%;
+  }
+  main.grid > *{
+    min-width: 0;
+    min-height: 0;
     max-width: 100%;
   }
 
@@ -743,6 +748,9 @@
     flex-direction:column;
     border-top: 1px solid var(--line);
     background: var(--panel);
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
   }
   .ticker-bar{
     background: var(--panel-raise);
@@ -751,6 +759,8 @@
     align-items:stretch;
     height: 28px;
     overflow:hidden;
+    width: 100%;
+    max-width: 100%;
   }
   .ticker-stack .ticker-bar:first-child{ border-top: 0; }
   .ticker-label{
@@ -772,6 +782,7 @@
   .ticker-bar.tk-train .ticker-label{ background: #00f0c8; color: #0b121a; }
   .ticker-track{
     flex:1;
+    min-width: 0;
     overflow:hidden;
     position:relative;
     display:flex;
@@ -781,12 +792,15 @@
     display:inline-flex;
     align-items:center;
     white-space:nowrap;
+    width: max-content;
+    max-width: none;
     animation: ticker-scroll 90s linear infinite;
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--text-hi);
-    padding-left: 100%;
+    padding-left: 0;
     will-change: transform;
+    /* IMPORTANT: do NOT use padding-left:100% — it expands the page width */
   }
   .ticker-content:hover{ animation-play-state: paused; }
   .ticker-content .tk-empty{
@@ -813,7 +827,7 @@
   .ticker-content .tk-planned{ color: #ff4d9a; }
   .ticker-content .tk-waze{ color: #b8ff2e; }
   .ticker-content .tk-train{ color: #00f0c8; }
-  @keyframes ticker-scroll{ from{ transform: translateX(0);} to{ transform: translateX(-100%);} }
+  @keyframes ticker-scroll{ from{ transform: translateX(0);} to{ transform: translateX(-50%);} }
 
   @media (prefers-reduced-motion: reduce){
     .ticker-content{ animation: none; }
