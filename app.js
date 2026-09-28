@@ -683,24 +683,38 @@ async function fetchRss() {
 }
 
 // ---------------------------------------------------------------------
-// DATA FETCHING — WebCAD HTML list (primary: has incident # + eid for units)
-// Same page the county site uses: livecad-incidents.asp
+// DATA FETCHING — WebCAD HTML list (PRIMARY county source)
+// livecad-incidents.asp — same page embedded on montgomerycountypa.gov
+// Provides: nature, location, municipality, station, time, incident #, eid
 // ---------------------------------------------------------------------
 async function fetchWebcadIncidents() {
   setSourceStatus('rss', 'connecting');
-  for (const url of buildCandidateUrls('incidents')) {
+  const urls = buildCandidateUrls('incidents');
+  // Prefer embed mode (lighter chrome) as an extra try
+  const workerBase = CONFIG.sources.worker && CONFIG.sources.worker.baseUrl;
+  if (workerBase) {
+    const base = workerBase.replace(/\/+$/, '');
+    urls.unshift(`${base}/incidents`);
+  }
+
+  for (const url of urls) {
     try {
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) continue;
+      const res = await fetch(url, { cache: 'no-store', mode: 'cors' });
+      if (!res.ok) {
+        console.warn('[montcoxplr] webcad HTML HTTP', res.status, url);
+        continue;
+      }
       const html = await res.text();
+      if (!html || html.length < 200) continue;
       const { incidents, index } = parseWebcadIncidentsHtml(html);
+      console.info('[montcoxplr] webcad HTML parsed', incidents.length, 'incidents from', url);
       if (incidents.length > 0) {
-        // Keep eid index fresh for unit lookups
         if (index.size) state.incidentEidByNum = index;
         setSourceStatus('rss', 'live');
         return incidents;
       }
     } catch (err) {
+      console.warn('[montcoxplr] webcad HTML fetch failed', url, err);
       continue;
     }
   }
@@ -721,41 +735,44 @@ function decodeHtmlEntities(s) {
 function parseWebcadIncidentsHtml(html) {
   const incidents = [];
   const index = new Map();
-  // data-eid / data-num may appear in either order
-  const btnRe = /<button[^>]*class=['"]inc['"][^>]*>([\s\S]*?)<\/button>/gi;
-  let m;
-  let idx = 0;
-  while ((m = btnRe.exec(html)) !== null) {
-    const full = m[0];
-    const inner = m[1];
-    const eidM = full.match(/data-eid=['"](\d+)['"]/i);
-    const numM = full.match(/data-num=['"]([^'"]+)['"]/i);
-    const catM = full.match(/data-cat=['"]([^'"]+)['"]/i);
+  if (!html) return { incidents, index };
+
+  // Split on each incident button — county uses class='inc' with data-eid/data-num
+  const chunks = html.split(/(?=<button\b)/i);
+  for (const chunk of chunks) {
+    if (!/\bclass\s*=\s*['"]inc['"]/i.test(chunk) && !/\bclass\s*=\s*['"][^'"]*\binc\b/i.test(chunk)) {
+      continue;
+    }
+    const eidM = chunk.match(/data-eid\s*=\s*['"](\d+)['"]/i);
+    const numM = chunk.match(/data-num\s*=\s*['"]([^'"]+)['"]/i);
     if (!eidM || !numM) continue;
     const eid = eidM[1];
     const num = String(numM[1]).trim().toUpperCase();
+    const catM = chunk.match(/data-cat\s*=\s*['"]([^'"]+)['"]/i);
     const rawCat = (catM && catM[1]) || '';
-    const typeM = inner.match(/class=['"]inc-type['"][^>]*>([^<]+)/i);
-    const locM = inner.match(/class=['"]inc-loc['"][^>]*>([^<]+)/i);
-    const metaSpans = [...inner.matchAll(/class=['"]inc-meta['"][^>]*>([\s\S]*?)<\/span>/i)];
+
+    const typeM = chunk.match(/class\s*=\s*['"]inc-type['"][^>]*>([^<]+)/i);
+    const locM = chunk.match(/class\s*=\s*['"]inc-loc['"][^>]*>([^<]+)/i);
+
     let municipality = '';
     let station = '';
     let dispatched = '';
-    // meta is one wrapper with inner <span>s
-    const metaBlock = inner.match(/class=['"]inc-meta['"][^>]*>([\s\S]*?)<\/span>\s*<\/button>|class=['"]inc-meta['"][^>]*>([\s\S]*?)$/i);
-    // Simpler: all spans inside inc-meta
-    const metaInner = inner.match(/class=['"]inc-meta['"][^>]*>([\s\S]*)/i);
+    const metaInner = chunk.match(/class\s*=\s*['"]inc-meta['"][^>]*>([\s\S]*)/i);
     if (metaInner) {
-      const spans = [...metaInner[1].matchAll(/<span[^>]*>([^<]*)<\/span>/gi)].map((x) => decodeHtmlEntities(x[1]).trim());
+      const spans = [...metaInner[1].matchAll(/<span[^>]*>([^<]*)<\/span>/gi)]
+        .map((x) => decodeHtmlEntities(x[1]).trim())
+        .filter(Boolean);
       for (const s of spans) {
         if (/^station\b/i.test(s)) station = s.replace(/^station\s*/i, '').trim();
         else if (/dispatched/i.test(s)) {
           const tm = s.match(/(\d{4}-\d{2}-\d{2}\s*@\s*\d{1,2}:\d{2}:\d{2})/);
-          if (tm) dispatched = tm[1];
-          else dispatched = s.replace(/^dispatched\s*/i, '').trim();
-        } else if (s && !municipality) municipality = s;
+          dispatched = tm ? tm[1] : s.replace(/^dispatched\s*/i, '').trim();
+        } else if (!municipality) {
+          municipality = s;
+        }
       }
     }
+
     const nature = decodeHtmlEntities(typeM ? typeM[1] : 'INCIDENT').trim().toUpperCase();
     const address = decodeHtmlEntities(locM ? locM[1] : '').trim() || 'Address unavailable';
     index.set(num, { eid, num });
@@ -772,18 +789,26 @@ function parseWebcadIncidentsHtml(html) {
       cat: classifyIncident(rawCat, `${nature} ${rawCat}`),
       lat: null,
       lon: null,
-      source: 'rss',
+      source: 'webcad',
       _sortKey: toSortKey(dispatched) || Date.now()
     });
-    idx += 1;
   }
-  // Also populate index via attribute-only scan as backup
-  const re = /data-eid=['"](\d+)['"]\s+data-num=['"]([^'"]+)['"]/gi;
+
+  // Attribute-only index backup
+  const re = /data-eid\s*=\s*['"](\d+)['"][^>]*data-num\s*=\s*['"]([^'"]+)['"]/gi;
+  let m;
   while ((m = re.exec(html)) !== null) {
     const eid = m[1];
     const num = String(m[2]).trim().toUpperCase();
     if (eid && num && !index.has(num)) index.set(num, { eid, num });
   }
+  const re2 = /data-num\s*=\s*['"]([^'"]+)['"][^>]*data-eid\s*=\s*['"](\d+)['"]/gi;
+  while ((m = re2.exec(html)) !== null) {
+    const num = String(m[1]).trim().toUpperCase();
+    const eid = m[2];
+    if (eid && num && !index.has(num)) index.set(num, { eid, num });
+  }
+
   return { incidents, index };
 }
 
@@ -1598,8 +1623,9 @@ async function refreshAll() {
   const webcadIncidents = await fetchWebcadIncidents();
   if (webcadIncidents && webcadIncidents.length) {
     combined = webcadIncidents;
-    activeSource = 'rss';
+    activeSource = 'webcad';
     setSourceStatus('arcgis', 'down');
+    setSourceStatus('rss', 'live');
   }
 
   // 2) Fallback: RSS (no incident numbers → units unavailable)
@@ -1641,7 +1667,7 @@ async function refreshAll() {
   state.activeIncidentSource = activeSource;
 
   // Apply any cached geocodes before first paint
-  if (activeSource === 'rss') {
+  if (activeSource === 'rss' || activeSource === 'webcad') {
     loadGeocodeCacheFromStorage();
     for (const inc of combined) {
       if (inc.lat != null || (inc.source !== 'rss' && inc.source !== 'webcad')) continue;
@@ -1662,8 +1688,9 @@ async function refreshAll() {
 
   state.incidents = combined;
 
-  if (activeSource === 'arcgis' || activeSource === 'rss') {
-    setSourceStatus(activeSource, 'live');
+  if (activeSource === 'arcgis' || activeSource === 'rss' || activeSource === 'webcad') {
+    if (activeSource === 'webcad') setSourceStatus('rss', 'live');
+    else setSourceStatus(activeSource, 'live');
   } else if (activeSource === 'demo') {
     const primaryLbl = document.getElementById('lbl-arcgis');
     const primaryDot = document.getElementById('dot-arcgis');
@@ -1689,7 +1716,7 @@ async function refreshAll() {
   updateBadge();
 
   // 4) Geocode remaining RSS addresses in background (pins fill in progressively)
-  if (activeSource === 'rss') {
+  if (activeSource === 'rss' || activeSource === 'webcad') {
     geocodeIncidents(state.incidents)
       .then(() => {
         renderMarkers();
@@ -1750,7 +1777,7 @@ function renderFeedList() {
         ${i.station ? `<span>STA ${escapeHtml(i.station)}</span>` : ''}
         ${i.dispatched ? `<span>${escapeHtml(i.dispatched)}</span>` : ''}
         <span class="${i.lat != null ? 'geo-yes' : 'geo-no'}">${i.lat != null ? 'MAPPED' : 'NO GEO'}</span>
-        <span>${i.source.toUpperCase()}</span>
+        <span>${i.source === 'webcad' ? 'WEBCAD' : i.source === 'rss' ? 'RSS' : escapeHtml(String(i.source || '').toUpperCase())}</span>
       </div>
       <div class="expand-hint">${expanded ? '▲ Hide units' : '▼ Units / zoom'}</div>
       <div class="card-units" ${expanded ? '' : 'hidden'}>
@@ -1935,7 +1962,8 @@ setInterval(() => {
 
 const SOURCE_LABELS = {
   arcgis: 'CAD MAP FEED',
-  rss: 'WEBCAD LIVE'
+  rss: 'WEBCAD LIVE',
+  webcad: 'WEBCAD LIVE'
 };
 
 function setSourceStatus(source, status) {
@@ -1958,7 +1986,7 @@ function setSourceStatus(source, status) {
     if (primaryLbl && state.activeIncidentSource) {
       const active = state.activeIncidentSource;
       const activeStatus = state.sourceStatus[active] || status;
-      const label = active === 'rss' ? 'WEBCAD LIVE' : active === 'demo' ? 'DEMO DATA' : 'CAD MAP FEED';
+      const label = (active === 'rss' || active === 'webcad') ? 'WEBCAD LIVE' : active === 'demo' ? 'DEMO DATA' : 'CAD MAP FEED';
       const statusText = activeStatus === 'live' ? 'LIVE'
         : activeStatus === 'connecting' ? 'SYNCING' : 'OFFLINE';
       primaryLbl.textContent = `${label} · ${statusText}`;

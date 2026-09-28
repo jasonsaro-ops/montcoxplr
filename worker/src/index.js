@@ -169,8 +169,10 @@ async function proxyUpstream(upstreamUrl, contentType, cacheTtl, env, ctx, reque
 }
 
 function corsHeaders(env) {
+  // Always * — public GitHub Pages / previews must be able to read the relay.
+  // (A locked ALLOWED_ORIGIN caused the browser to fall back to RSS with no units.)
   return {
-    'Access-Control-Allow-Origin': (env && env.ALLOWED_ORIGIN) || '*',
+    'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Max-Age': '86400'
