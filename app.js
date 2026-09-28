@@ -135,7 +135,10 @@ const CONFIG = {
       winterConditions: 'https://gis.montcopa.org/opendata/data/winter-conditions.geojson',
       plannedEvents: 'https://gis.montcopa.org/opendata/data/planned-events.geojson',
       // SEPTA Regional Rail positions (county Train View)
-      trains: 'https://gis.montcopa.org/arcgis/rest/services/Hosted/Montco_SEPTA_Regional_Rail_View/FeatureServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson'
+      trains: 'https://gis.montcopa.org/arcgis/rest/services/Hosted/Montco_SEPTA_Regional_Rail_View/FeatureServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson',
+      // Waze for Cities (county Waze Traffic map) — alerts (0) + jams (1)
+      wazeAlerts: 'https://gis.montcopa.org/arcgis/rest/services/Hosted/Montgomery_County_Waze_Alerts/FeatureServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson',
+      wazeJams: 'https://gis.montcopa.org/arcgis/rest/services/Hosted/Montgomery_County_Waze_Alerts/FeatureServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson'
     }
   }
 };
@@ -158,6 +161,7 @@ const COLORS = {
   winter: '#7ec8ff',
   planned: '#ff4d9a',
   train: '#00f0c8',   // standout teal for regional rail
+  waze: '#ff7a18',    // Waze orange
   other: '#9c7cf0'
 };
 
@@ -196,13 +200,20 @@ const state = {
   // Leaflet layer group for polygon/line overlays (outages, winter roads)
   overlayLayer: null,
   // address|muni → {lat,lon} | null (Photon geocode cache)
-  geocodeCache: new Map()
+  geocodeCache: new Map(),
+  // Optional map layers (fetched always; visibility controlled here)
+  layerToggles: {
+    waze: false   // Waze traffic alerts — OFF by default
+  },
+  // Cached Waze items so toggling on doesn't require a full refresh
+  wazeItems: []
 };
 
 // ---------------------------------------------------------------------
 // BOOT
 // ---------------------------------------------------------------------
 document.addEventListener('DOMContentLoaded', () => {
+  initLayerToggles();
   initMap();
   initClock();
   initFilters();
@@ -441,6 +452,18 @@ function markerGlyphSvg(cat) {
       return `<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path fill="${c}" d="M12 2.5l7 3.2v5.6c0 4.4-2.9 8.4-7 10.2-4.1-1.8-7-5.8-7-10.2V5.7l7-3.2z"/></svg>`;
     case 'train': // train
       return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="${c}" d="M7 4h10a3 3 0 0 1 3 3v8a2 2 0 0 1-2 2h-1l2 3h-2l-1.5-2h-5L8 20H6l2-3H7a2 2 0 0 1-2-2V7a3 3 0 0 1 3-3zm0 3v4h10V7H7zm2 7.5a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4zm6 0a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4z"/></svg>`;
+    case 'waze-closed': // do-not-enter
+      return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="${c}" stroke-width="2"/><rect x="6" y="10.5" width="12" height="3" rx="1" fill="${c}"/></svg>`;
+    case 'waze-hazard': // warning triangle + !
+      return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="${c}" d="M12 3l10 18H2L12 3zm0 5.5a1 1 0 0 0-1 1v5a1 1 0 1 0 2 0v-5a1 1 0 0 0-1-1zm0 9.2a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4z"/></svg>`;
+    case 'waze-accident': // crash-ish X in circle
+      return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="${c}" stroke-width="2"/><path stroke="${c}" stroke-width="2" stroke-linecap="round" d="M8 8l8 8M16 8l-8 8"/></svg>`;
+    case 'waze-police': // shield
+      return `<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path fill="${c}" d="M12 2l8 3v6c0 5-3.4 9.4-8 11-4.6-1.6-8-6-8-11V5l8-3z"/></svg>`;
+    case 'waze-jam': // jam bars
+      return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="${c}" d="M4 7h16v3H4V7zm0 5h16v3H4v-3zm0 5h16v3H4v-3z"/></svg>`;
+    case 'waze':
+      return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="${c}" d="M12 3l10 18H2L12 3zm0 5.5a1 1 0 0 0-1 1v5a1 1 0 1 0 2 0v-5a1 1 0 0 0-1-1zm0 9.2a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4z"/></svg>`;
     case 'outage': // lightning
       return `<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path fill="${c}" d="M13 2L6 13h5l-1 9 8-12h-5l0-8z"/></svg>`;
     default:
@@ -448,10 +471,10 @@ function markerGlyphSvg(cat) {
   }
 }
 
-function makeDivIcon(cat) {
+function makeDivIcon(cat, iconKey) {
   const color = COLORS[cat] || COLORS.other;
-  const glyph = markerGlyphSvg(cat);
-  const size = cat === 'train' ? 28 : 26;
+  const glyph = markerGlyphSvg(iconKey || cat);
+  const size = (cat === 'train' || cat === 'waze') ? 28 : 26;
   return L.divIcon({
     className: 'mx-marker-icon',
     html: `<div class="mx-marker" style="--mx:${color}">
@@ -469,13 +492,15 @@ function renderMarkers() {
   state.markers.clear();
   if (state.overlayLayer) state.overlayLayer.clearLayers();
 
-  const visible = state.incidents.filter(
-    (i) => i.lat != null && i.lon != null &&
-           (state.activeFilter === 'all' || i.cat === state.activeFilter)
-  );
+  const visible = state.incidents.filter((i) => {
+    if (i.lat == null || i.lon == null) return false;
+    if (i.cat === 'waze' && !(state.layerToggles && state.layerToggles.waze)) return false;
+    if (state.activeFilter !== 'all' && i.cat !== state.activeFilter) return false;
+    return true;
+  });
 
   visible.forEach((inc) => {
-    // Polygon / line overlays (power outages, winter road segments)
+    // Polygon / line overlays (power outages, winter road segments, waze jams)
     if (inc.geometry && state.overlayLayer) {
       try {
         const style = overlayStyleFor(inc);
@@ -490,7 +515,9 @@ function renderMarkers() {
     }
 
     // Point / centroid markers (always — outage polygons also get a pin)
-    const marker = L.marker([inc.lat, inc.lon], { icon: makeDivIcon(inc.cat) });
+    const marker = L.marker([inc.lat, inc.lon], {
+      icon: makeDivIcon(inc.cat, inc.iconKey || inc.cat)
+    });
     marker.bindPopup(buildPopupHtml(inc));
     marker.on('click', () => selectIncident(inc.id));
     marker.addTo(state.map);
@@ -517,6 +544,17 @@ function buildPopupHtml(inc) {
 }
 
 function overlayStyleFor(inc) {
+  if (inc.cat === 'waze') {
+    const level = inc.jamLevel != null ? Number(inc.jamLevel) : 3;
+    const alpha = 0.35 + Math.min(0.5, level * 0.08);
+    return {
+      color: COLORS.waze,
+      weight: 3 + Math.min(4, level),
+      opacity: 0.9,
+      fillColor: COLORS.waze,
+      fillOpacity: alpha
+    };
+  }
   if (inc.cat === 'outage') {
     const fill = OUTAGE_SEVERITY_COLORS[inc.severity] || OUTAGE_SEVERITY_COLORS.moderate;
     return {
@@ -1597,6 +1635,100 @@ function normalizeTrains(geojson) {
 }
 
 
+function wazeIconKey(alertType) {
+  const t = String(alertType || '').toUpperCase();
+  if (/ROAD_CLOSED|CLOSED/.test(t)) return 'waze-closed';
+  if (/ACCIDENT/.test(t)) return 'waze-accident';
+  if (/POLICE/.test(t)) return 'waze-police';
+  if (/JAM/.test(t)) return 'waze-jam';
+  if (/HAZARD|WEATHER/.test(t)) return 'waze-hazard';
+  return 'waze';
+}
+
+function normalizeWazeAlerts(geojson) {
+  const features = (geojson && geojson.features) || [];
+  return features.map((f, idx) => {
+    const p = f.properties || {};
+    const g = f.geometry;
+    let lat = null;
+    let lon = null;
+    if (g && g.type === 'Point' && Array.isArray(g.coordinates)) {
+      lon = g.coordinates[0];
+      lat = g.coordinates[1];
+    }
+    if (lat == null || lon == null) return null;
+    const alertType = p.alert_type || p.type || 'ALERT';
+    const subtype = p.subtype || '';
+    const street = p.street || '';
+    const city = p.city || '';
+    const label = String(alertType).replace(/_/g, ' ');
+    return {
+      id: `waze-a-${p.uuid || p.objectid || idx}`,
+      incidentno: '',
+      type: subtype ? `WAZE · ${label} · ${String(subtype).replace(/_/g, ' ')}` : `WAZE · ${label}`,
+      address: street || 'Waze alert',
+      municipality: city,
+      station: '',
+      dispatched: '',
+      description: [
+        p.report_desc || '',
+        p.reliability != null ? `Reliability ${p.reliability}` : '',
+        p.confidence != null ? `Confidence ${p.confidence}` : ''
+      ].filter(Boolean).join(' · '),
+      cat: 'waze',
+      iconKey: wazeIconKey(alertType),
+      lat,
+      lon,
+      source: 'waze',
+      _sortKey: p.pub_utc || Date.now()
+    };
+  }).filter(Boolean);
+}
+
+function normalizeWazeJams(geojson) {
+  const features = (geojson && geojson.features) || [];
+  return features.map((f, idx) => {
+    const p = f.properties || {};
+    const g = f.geometry;
+    // Centroid of line for marker
+    let lat = null;
+    let lon = null;
+    if (g && g.type === 'LineString' && Array.isArray(g.coordinates) && g.coordinates.length) {
+      const mid = g.coordinates[Math.floor(g.coordinates.length / 2)];
+      lon = mid[0];
+      lat = mid[1];
+    } else if (g && g.type === 'Point' && Array.isArray(g.coordinates)) {
+      lon = g.coordinates[0];
+      lat = g.coordinates[1];
+    }
+    if (lat == null || lon == null) return null;
+    const level = p.level != null ? Number(p.level) : 0;
+    const street = p.street || '';
+    const city = p.city || '';
+    const speed = p.speed_kmh != null ? `${p.speed_kmh} km/h` : '';
+    const delay = p.delay_s != null && Number(p.delay_s) > 0 ? `${Math.round(p.delay_s / 60)} min delay` : '';
+    return {
+      id: `waze-j-${p.uuid || p.objectid || idx}`,
+      incidentno: '',
+      type: `WAZE · JAM L${level}`,
+      address: street || 'Traffic jam',
+      municipality: city,
+      station: '',
+      dispatched: '',
+      description: [speed, delay, p.length_m != null ? `${Math.round(p.length_m)} m` : ''].filter(Boolean).join(' · '),
+      cat: 'waze',
+      iconKey: 'waze-jam',
+      jamLevel: level,
+      lat,
+      lon,
+      geometry: g || null,
+      source: 'waze',
+      _sortKey: p.pub_utc || Date.now()
+    };
+  }).filter(Boolean);
+}
+
+
 async function fetchOverlays() {
   const urls = CONFIG.sources.overlays || {};
   const jobs = [
@@ -1604,7 +1736,9 @@ async function fetchOverlays() {
     ['road', urls.roadConditions, normalizeRoadConditions],
     ['winter', urls.winterConditions, normalizeWinterConditions],
     ['events', urls.plannedEvents, normalizePlannedEvents],
-    ['trains', urls.trains, normalizeTrains]
+    ['trains', urls.trains, normalizeTrains],
+    ['wazeAlerts', urls.wazeAlerts, normalizeWazeAlerts],
+    ['wazeJams', urls.wazeJams, normalizeWazeJams]
   ];
 
   const results = await Promise.allSettled(
@@ -1896,7 +2030,7 @@ async function refreshAll() {
 function renderStats() {
   const counts = {
     fire: 0, ems: 0, traffic: 0,
-    outage: 0, road511: 0, winter: 0, planned: 0, train: 0, other: 0
+    outage: 0, road511: 0, winter: 0, planned: 0, train: 0, waze: 0, other: 0
   };
   state.incidents.forEach((i) => { counts[i.cat] = (counts[i.cat] || 0) + 1; });
   const set = (id, n) => { const el = document.getElementById(id); if (el) el.textContent = n; };
@@ -1909,11 +2043,13 @@ function renderStats() {
   set('stat-winter', counts.winter);
   set('stat-planned', counts.planned);
   set('stat-train', counts.train);
+  set('stat-waze', counts.waze);
 }
 
 function renderFeedList() {
   const list = document.getElementById('feed-list');
   const filtered = state.incidents.filter((i) => {
+    if (i.cat === 'waze' && !(state.layerToggles && state.layerToggles.waze)) return false;
     if (state.activeFilter !== 'all' && i.cat !== state.activeFilter) return false;
     return incidentMatchesUnitFilter(i);
   });
@@ -2309,4 +2445,27 @@ function getDemoIncidents() {
     source: 'demo',
     _sortKey: now - s.mins * 60000
   }));
+}
+
+
+// ---------------------------------------------------------------------
+// LAYER TOGGLES (Waze off-by-default)
+// ---------------------------------------------------------------------
+function initLayerToggles() {
+  const btn = document.getElementById('toggle-waze');
+  if (!btn) return;
+  const sync = () => {
+    const on = !!(state.layerToggles && state.layerToggles.waze);
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btn.title = on ? 'Hide Waze traffic alerts' : 'Show Waze traffic alerts (off by default)';
+  };
+  sync();
+  btn.addEventListener('click', () => {
+    state.layerToggles.waze = !state.layerToggles.waze;
+    sync();
+    renderMarkers();
+    renderFeedList();
+    renderStats();
+  });
 }

@@ -287,6 +287,7 @@
   .swatch.winter{ background: #7ec8ff; box-shadow:0 0 4px #7ec8ff; }
   .swatch.planned{ background: #ff4d9a; box-shadow:0 0 4px #ff4d9a; }
   .swatch.train{ background:#00f0c8; }
+  .swatch.waze{ background:#ff7a18; box-shadow:0 0 4px #ff7a18; }
   .swatch.other{ background: var(--other); box-shadow:0 0 4px var(--other); }
 
   .aux-block{
@@ -392,6 +393,32 @@
     color:#0b121a;
   }
   .mx-marker-disc svg{ display:block; }
+
+  .layer-toggles{
+    display:flex; flex-wrap:wrap; gap:6px; margin-top:6px;
+  }
+  .layer-toggle{
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--text-mid);
+    cursor: pointer;
+  }
+  .layer-toggle.active{
+    border-color: #ff7a18;
+    color: #0b121a;
+    background: #ff7a18;
+    font-weight: 600;
+  }
+  .layer-toggle:not(.active)::after{
+    content: " OFF";
+    opacity: 0.7;
+  }
 
   .leaflet-tile-pane{
     filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.92) saturate(0.85);
@@ -995,6 +1022,10 @@
             <div class="n" id="stat-train">0</div>
             <div class="label">Train</div>
           </div>
+          <div class="stat-card" data-cat="waze">
+            <div class="n" id="stat-waze">0</div>
+            <div class="label">Waze</div>
+          </div>
         </div>
       </div>
 
@@ -1009,6 +1040,7 @@
           <div class="legend-row"><span class="swatch winter"></span><span>Winter</span></div>
           <div class="legend-row"><span class="swatch planned"></span><span>Planned</span></div>
           <div class="legend-row"><span class="swatch train"></span><span>Train</span></div>
+          <div class="legend-row"><span class="swatch waze"></span><span>Waze</span></div>
           <div class="legend-row"><span class="swatch other"></span><span>Other</span></div>
         </div>
         <p style="font-size:9.5px; color:var(--text-dim); margin-top:4px; line-height:1.3;">
@@ -1042,6 +1074,9 @@
     <aside class="feed-rail">
       <div class="feed-head">
         <div class="panel-label">Live Dispatch Feed</div>
+        <div class="layer-toggles">
+          <button type="button" class="layer-toggle" id="toggle-waze" aria-pressed="false" title="Show Waze traffic alerts (off by default)">Waze layer</button>
+        </div>
         <div class="feed-filters">
           <button class="filter-btn active" data-filter="all">All</button>
           <button class="filter-btn" data-filter="fire">Fire</button>
@@ -1052,6 +1087,7 @@
           <button class="filter-btn" data-filter="winter">Winter</button>
           <button class="filter-btn" data-filter="planned">Planned</button>
           <button class="filter-btn" data-filter="train">Train</button>
+          <button class="filter-btn" data-filter="waze">Waze</button>
         </div>
         <div class="feed-filters unit-filters" title="Filter by assigned unit status (uses loaded unit data)">
           <span class="filter-group-label">Units</span>
