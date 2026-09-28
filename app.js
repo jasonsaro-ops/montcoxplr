@@ -48,10 +48,14 @@ const CONFIG = {
   staleMaxAgeMs: 45 * 60 * 1000, // 45 minutes
 
   map: {
-    center: [40.1400, -75.3200], // Montgomery County, PA centroid
-    zoom: 11,
+    center: [40.2100, -75.3700], // Montgomery County, PA centroid
+    zoom: 10,
     minZoom: 9,
     maxZoom: 18,
+    // Keep the map locked to the greater Montco / SEPTA region
+    // [SW lat, SW lon], [NE lat, NE lon]
+    maxBounds: [[39.70, -76.05], [40.55, -74.85]],
+    maxBoundsViscosity: 0.85,
     // OpenStreetMap raster tiles (full zoom 0–19, no API key).
     // Dark theme is applied via CSS filter on .leaflet-tile-pane in
     // index.html — invert + hue-rotate keeps the map dark at every zoom
@@ -394,7 +398,9 @@ function updateAudioToggleUI() {
 function initMap() {
   const m = L.map('map', {
     zoomControl: false,
-    attributionControl: true
+    attributionControl: true,
+    maxBounds: CONFIG.map.maxBounds || null,
+    maxBoundsViscosity: CONFIG.map.maxBoundsViscosity != null ? CONFIG.map.maxBoundsViscosity : 0.8
   }).setView(CONFIG.map.center, CONFIG.map.zoom);
 
   // Zoom control top-right under Reset View (see CSS).
@@ -433,6 +439,13 @@ function initMap() {
 
   // Drop any leftover style preference from the multi-basemap experiment
   try { localStorage.removeItem('montcoxplr_basemap'); } catch (err) { /* ignore */ }
+
+  // Ensure correct center after layout paints (fixes empty map / wrong region)
+  setTimeout(() => {
+    if (!state.map) return;
+    state.map.invalidateSize();
+    state.map.setView(CONFIG.map.center, CONFIG.map.zoom, { animate: false });
+  }, 100);
 }
 
 // Small SVG glyph per category (fire truck, ambulance, cone, keystone, train…)
@@ -471,6 +484,17 @@ function markerGlyphSvg(cat) {
   }
 }
 
+
+// Greater Montgomery County / SEPTA regional envelope
+function isInCountyRegion(lat, lon) {
+  if (lat == null || lon == null || isNaN(lat) || isNaN(lon)) return false;
+  const b = CONFIG.map.maxBounds;
+  if (!b) return true;
+  const sw = b[0];
+  const ne = b[1];
+  return lat >= sw[0] && lat <= ne[0] && lon >= sw[1] && lon <= ne[1];
+}
+
 function makeDivIcon(cat, iconKey) {
   const color = COLORS[cat] || COLORS.other;
   const glyph = markerGlyphSvg(iconKey || cat);
@@ -495,6 +519,7 @@ function renderMarkers() {
 
   const visible = state.incidents.filter((i) => {
     if (i.lat == null || i.lon == null) return false;
+    if (!isInCountyRegion(i.lat, i.lon)) return false;
     if (i.cat === 'waze' && !(state.layerToggles && state.layerToggles.waze)) return false;
     if (state.activeFilter !== 'all' && i.cat !== state.activeFilter) return false;
     return true;
@@ -2012,6 +2037,15 @@ async function refreshAll() {
   renderFeedList();
   renderTicker();
   updateBadge();
+  if (state.map) {
+    setTimeout(() => {
+      state.map.invalidateSize();
+      const c = state.map.getCenter();
+      if (!isInCountyRegion(c.lat, c.lng)) {
+        state.map.setView(CONFIG.map.center, CONFIG.map.zoom, { animate: false });
+      }
+    }, 50);
+  }
 
   // 4) Geocode remaining RSS addresses in background (pins fill in progressively)
   if (activeSource === 'rss' || activeSource === 'webcad') {
@@ -2184,23 +2218,37 @@ function tickerItemHtml(i) {
 
 function fillTicker(el, items, emptyMsg) {
   if (!el) return;
+  // Reset animation so duration changes take effect
+  el.style.animation = 'none';
+  void el.offsetWidth;
+
   if (!items || items.length === 0) {
-    el.innerHTML = `<span>${emptyMsg}</span>`;
-    el.style.animationDuration = '20s';
+    el.innerHTML = `<span class="tk-empty">${emptyMsg}</span>`;
+    el.style.animation = '';
+    el.style.animationDuration = '80s';
     return;
   }
   // Duplicate content so the loop feels continuous at faster speeds
   const html = items.map(tickerItemHtml).join('');
   el.innerHTML = html + html;
-  // Faster scroll: ~3.2s per item, floor 18s
-  const duration = Math.max(18, items.length * 3.2);
+  // Readable pace: ~8s per item, floor 60s (was too fast at 2.8s)
+  const duration = Math.max(60, items.length * 8);
+  el.style.animation = '';
   el.style.animationDuration = `${duration}s`;
   el.querySelectorAll('.tk-item[data-id]').forEach((node) => {
     const go = (e) => {
       e.preventDefault();
       e.stopPropagation();
       const id = node.getAttribute('data-id');
-      if (id) selectIncident(id);
+      if (!id) return;
+      // Ensure map is in county before zooming to a pin
+      if (state.map) {
+        const c = state.map.getCenter();
+        if (!isInCountyRegion(c.lat, c.lng)) {
+          state.map.setView(CONFIG.map.center, CONFIG.map.zoom, { animate: false });
+        }
+      }
+      selectIncident(id);
     };
     node.addEventListener('click', go);
     node.addEventListener('keydown', (e) => {

@@ -196,8 +196,9 @@
   main.grid{
     grid-area: main;
     display:grid;
-    grid-template-columns: 220px 1fr 400px;
+    grid-template-columns: 220px minmax(0, 1fr) minmax(300px, 400px);
     overflow:hidden;
+    min-height: 0;
   }
 
   .rail{
@@ -583,6 +584,9 @@
     display:flex;
     flex-direction:column;
     overflow:hidden;
+    min-width: 300px;
+    min-height: 0;
+    z-index: 2;
   }
   .feed-head{
     padding: 12px 14px 8px;
@@ -753,18 +757,26 @@
   }
   .ticker-content{
     display:inline-flex;
+    align-items:center;
     white-space:nowrap;
-    animation: ticker-scroll 40s linear infinite;
+    animation: ticker-scroll 90s linear infinite;
     font-family: var(--font-mono);
     font-size: 11px;
-    color: var(--text-mid);
-    padding-left:100%;
+    color: var(--text-hi);
+    padding-left: 100%;
+    will-change: transform;
   }
   .ticker-content:hover{ animation-play-state: paused; }
+  .ticker-content .tk-empty{
+    color: var(--text-dim);
+    padding-right: 24px;
+  }
   .ticker-content .tk-item{
     margin-right: 36px;
     cursor: pointer;
     transition: color 0.12s, opacity 0.12s;
+    flex-shrink: 0;
+    color: var(--text-hi);
   }
   .ticker-content .tk-item:hover{
     color: var(--text);
